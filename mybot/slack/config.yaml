@@ -1,0 +1,17 @@
+log level: DEBUG
+slack API token: TODO
+user id: OPTIONAL_TODO
+check delay: 1
+reply rules:
+  - pattern: (?i)^(hello|hey|hi|yo+)( yo+)*( justin)?[.!?]*$
+    replies:
+      - Hello.
+      - Hey.
+      - Hey, how's it going?
+      - Hi.
+      - Yo.
+  - pattern: (?i)^good ?night[.!?]*$
+    replies:
+      - Smell you later.
+      - Goodnight.
+      - Have a good night.
