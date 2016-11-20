@@ -6,7 +6,6 @@ import logging
 import os
 import random
 import re
-import sys
 import time
 from collections import namedtuple
 
@@ -15,7 +14,11 @@ from slackclient import SlackClient
 
 
 class MySlackBot(object):
-    def __init__(self, config_path):
+    def __init__(self):
+        config_path = os.getenv('MYBOT_SLACK_CONFIG_PATH')
+        if config_path is None:
+            config_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'config.yaml')
+
         print("Loading config from " + config_path)
         with io.open(config_path, 'r', encoding='utf8') as f:
             config = yaml.safe_load(f)
@@ -55,8 +58,14 @@ class MySlackBot(object):
 
     def handle_messages(self):
         if self._client.rtm_connect():
+            self._logger.info("Waiting for messages.")
             while True:
-                for event in self._client.rtm_read():
+                try:
+                    rtm_results = self._client.rtm_read()
+                except Exception as e:
+                    self._logger.exception(e)
+                    continue
+                for event in rtm_results:
                     try:
                         if self._logger.isEnabledFor(logging.DEBUG):
                             self._logger.debug("Event: \"%s\"", json.dumps(event, indent=2))
@@ -66,7 +75,7 @@ class MySlackBot(object):
                                 received_msg = event.get('text')
                                 reply = self._get_reply(received_msg)
                                 if reply:
-                                    self._logger.debug("Replying: \"%s\"", reply)
+                                    self._logger.info("Replying: \"%s\" in %s", reply, channel)
                                     self._client.rtm_send_message(channel, reply)
                     except Exception as e:
                         self._logger.exception(e)
@@ -76,12 +85,7 @@ class MySlackBot(object):
 
 
 def main():
-    if len(sys.argv) > 1:
-        config_path = sys.argv[1]
-    else:
-        config_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'config.yaml')
-
-    my_bot = MySlackBot(config_path)
+    my_bot = MySlackBot()
     my_bot.handle_messages()
 
 
