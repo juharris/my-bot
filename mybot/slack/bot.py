@@ -73,10 +73,11 @@ class MySlackBot(object):
                             channel = event.get('channel', '')
                             if channel.startswith('D'):
                                 received_msg = event.get('text')
-                                reply = self._get_reply(received_msg)
-                                if reply:
-                                    self._logger.info("Replying: \"%s\" in %s", reply, channel)
-                                    self._client.rtm_send_message(channel, reply)
+                                if received_msg:
+                                    reply = self._get_reply(received_msg)
+                                    if reply:
+                                        self._logger.info("Replying: \"%s\" in %s", reply, channel)
+                                        self._client.rtm_send_message(channel, reply)
                     except Exception as e:
                         self._logger.exception(e)
                 time.sleep(self._check_delay)

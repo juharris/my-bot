@@ -3,13 +3,14 @@ user id: OPTIONAL_TODO
 log level: INFO
 check delay: 1
 reply rules:
-  - pattern: (?i)^(hello|hey|hi|yo+)( yo+)*( justin)?[.!?]*$
+  - pattern: (?i)^(hello|hey|hi|yo+)( *yo+)*( justin)?[.!?]*$
     replies:
-      - Hello.
-      - Hey.
+      - Hello. What can I help you with?
+      - Hey. Do you need something?
       - Hey, how's it going?
-      - Hi.
-      - Yo.
+      - Hi, what's up?
+      - Yo. Is there anything that I can do for you?
+      - Yo, what's up?
   - pattern: (?i)^good ?night[.!?]*$
     replies:
       - Smell you later.
