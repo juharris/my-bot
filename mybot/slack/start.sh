@@ -1,5 +1,5 @@
 #!/bin/bash
 
-set -e
-
-python bot.py
+while true; do
+    python bot.py	
+done

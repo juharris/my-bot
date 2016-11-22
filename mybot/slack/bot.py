@@ -64,7 +64,7 @@ class MySlackBot(object):
                     rtm_results = self._client.rtm_read()
                 except Exception as e:
                     self._logger.exception(e)
-                    continue
+                    raise
                 for event in rtm_results:
                     try:
                         if self._logger.isEnabledFor(logging.DEBUG):

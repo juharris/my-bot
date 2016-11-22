@@ -26,7 +26,12 @@ Build the Docker container:
 docker build -t mybot .
 ```
 
-Run the container:
+Run the container (and see output):
+```sh
+docker run -it --rm -v ${PWD}:/usr/src/app --name mybot mybot
+```
+
+Run the container as a daemon:
 ```sh
 docker run -it -d -v ${PWD}:/usr/src/app --name mybot mybot
 ```
