@@ -2,7 +2,10 @@ import io
 import logging
 import os
 import random
+import string
 import sys
+from collections import Counter
+from operator import itemgetter
 from typing import List
 
 import numpy as np
@@ -10,7 +13,7 @@ import twitter
 import yaml
 from injector import inject, Injector, singleton
 from keras.callbacks import LambdaCallback, ModelCheckpoint
-from keras.layers import Activation, Bidirectional, Dense, LSTM
+from keras.layers import Activation, Bidirectional, Dense, GRU
 from keras.models import Sequential, load_model
 from keras.optimizers import RMSprop
 from tqdm import tqdm
@@ -43,7 +46,7 @@ class MyTwitterBot(object):
                                         access_token_key=twitter_api_config['access token key'],
                                         access_token_secret=twitter_api_config['access token secret'])
 
-        self.context_char_size = 20
+        self.context_char_size = 40
         self._eos_char = '×'
 
     def get_tweets(self, screen_name):
@@ -92,7 +95,6 @@ class MyTwitterBot(object):
 
             sentence = tweet[:self.context_char_size]
             generated = sentence
-            self._logger.info("Generating with seed: \"%s\"", sentence)
 
             # 179 just in case.
             for i in range(179 - self.context_char_size):
@@ -117,22 +119,43 @@ class MyTwitterBot(object):
             # Wait 1 hour.
             # time.sleep(60 * 60)
 
+    def pre_process(self, text):
+        result = text
+        if result.startswith("RT "):
+            result = result[3:]
+        result = result.lower()
+
+        return result
+
     @staticmethod
     def sample(preds, temperature=1.0) -> int:
         """
         Sample an index from a probability array.
         """
-        preds = np.asarray(preds).astype('float64')
-        preds = np.log(preds) / temperature
-        exp_preds = np.exp(preds)
-        preds = exp_preds / np.sum(exp_preds)
-        probas = np.random.multinomial(1, preds, 1)
+        if temperature is not None:
+            preds = np.asarray(preds).astype('float64')
+            preds = np.log(preds) / temperature
+            exp_preds = np.exp(preds)
+            preds = exp_preds / np.sum(exp_preds)
+            probas = np.random.multinomial(1, preds, 1)
+        else:
+            probas = preds
         return np.argmax(probas)
 
     def train(self):
         with open('tweets.csv', encoding='utf-8') as f:
             text = f.read()
-        chars = sorted(list(set(text)))
+        tweets = text.split('\n')
+        tweets = list(map(self.pre_process, tweets))
+
+        chars = Counter(text)
+        chars = filter(lambda c_count: c_count[1] >= 2, chars.most_common(n=26 + 10))
+        chars = map(itemgetter(0), chars)
+        chars = set(map(str.lower, chars))
+        chars |= set(string.ascii_lowercase)
+        chars |= set(string.digits)
+        chars |= set(' \'".?!#:')
+        chars = sorted(chars)
         assert self._eos_char not in chars, "Make a new EOS char."
         chars.append(self._eos_char)
         chars = sorted(chars)
@@ -144,52 +167,74 @@ class MyTwitterBot(object):
         char_indices = dict((c, i) for i, c in enumerate(chars))
         indices_char = dict((i, c) for i, c in enumerate(chars))
 
-        maxlen = self.context_char_size
         step = 1
         sentences = []
         next_chars = []
 
-        tweets = text.split('\n')
+        updated_tweets = []
+        for tweet in tweets:
+            # Filtered our OOV chars.
+            tweet = ''.join([c for c in tweet if c in chars])
+            updated_tweets.append(tweet)
+        tweets = updated_tweets
+        del updated_tweets
+
         for tweet in tweets:
             tweet += self._eos_char
-            for i in range(0, len(tweet) - maxlen, step):
-                sentences.append(tweet[i: i + maxlen])
-                next_chars.append(tweet[i + maxlen])
+            for i in range(0, len(tweet) - self.context_char_size, step):
+                sentences.append(tweet[i: i + self.context_char_size])
+                next_chars.append(tweet[i + self.context_char_size])
         print('nb sequences:', len(sentences))
 
-        print('Vectorization...')
-        x = np.zeros((len(sentences), maxlen, len(chars)), dtype=np.bool)
+        x = np.zeros((len(sentences), self.context_char_size, len(chars)), dtype=np.bool)
         y = np.zeros((len(sentences), len(chars)), dtype=np.bool)
         for i, sentence in enumerate(sentences):
             for t, char in enumerate(sentence):
                 x[i, t, char_indices[char]] = 1
             y[i, char_indices[next_chars[i]]] = 1
 
-        print('Build model...')
         model = Sequential()
-        model.add(Bidirectional(LSTM(64), input_shape=(maxlen, len(chars))))
+
+        model.add(Bidirectional(GRU(32, return_sequences=True,
+                                    # dropout=0.1, recurrent_dropout=0.1
+                                    ),
+                                input_shape=(self.context_char_size, len(chars))
+                                ))
+        # model.add(Dropout(0.2))
+        model.add(Bidirectional(GRU(32,
+                                    # dropout=0.1, recurrent_dropout=0.1
+                                    )))
+
+        # model.add(Conv1D(filters=1,
+        #                  kernel_size=16,
+        #                  strides=1,
+        #                  padding='causal',
+        #                  input_shape=(x.shape[1], x.shape[2])))
+        # model.add(Flatten())
+
+        # model.add(Dropout(0.2))
         model.add(Dense(len(chars)))
         model.add(Activation('softmax'))
 
-        optimizer = RMSprop(lr=0.01)
+        optimizer = RMSprop(lr=0.1, decay=0.1)
         model.compile(loss='categorical_crossentropy', optimizer=optimizer)
+        model.summary()
 
         def on_epoch_end(epoch, logs):
             print()
             print('----- Generating text after Epoch: %d' % epoch)
 
-            start_index = random.randint(0, len(text) - maxlen - 1)
-            for diversity in [0.2, 0.5, 1.0, 1.2]:
-                print('----- diversity:', diversity)
+            tweet_index = random.randint(0, len(tweets))
+            for diversity in [None, 0.2, 0.5, 1.0, 1.2]:
+                print('----- diversity:{}'.format(diversity))
 
-                generated = ''
-                sentence = text[start_index: start_index + maxlen]
-                generated += sentence
+                sentence = tweets[tweet_index][:self.context_char_size]
+                generated = sentence
                 print('----- Generating with seed: "' + sentence + '"')
                 sys.stdout.write(generated)
 
-                for i in range(100):
-                    x_pred = np.zeros((1, maxlen, len(chars)))
+                for i in range(179 - self.context_char_size):
+                    x_pred = np.zeros((1, self.context_char_size, len(chars)))
                     for t, char in enumerate(sentence):
                         x_pred[0, t, char_indices[char]] = 1.
 
