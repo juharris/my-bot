@@ -2,20 +2,20 @@ import io
 import logging
 import os
 import random
-import string
 import sys
-from collections import Counter
-from operator import itemgetter
-from typing import List
+from typing import List, Iterable
 
 import numpy as np
+import pandas as pd
 import twitter
 import yaml
 from injector import inject, Injector, singleton
 from keras.callbacks import LambdaCallback, ModelCheckpoint
-from keras.layers import Activation, Bidirectional, Dense, GRU
+from keras.layers import Activation, Bidirectional, Dense, Embedding, GRU
 from keras.models import Sequential, load_model
 from keras.optimizers import RMSprop
+from keras.preprocessing.sequence import pad_sequences
+from keras.preprocessing.text import Tokenizer
 from tqdm import tqdm
 
 
@@ -25,14 +25,14 @@ class MyTwitterBot(object):
     def __init__(self):
         config_path = os.getenv('MYBOT_TWITTER_CONFIG_PATH')
         if config_path is None:
-            config_path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'config.yaml')
+            config_path = os.path.expanduser('~/.my-bot/config.yaml')
 
         print("Loading config from `{}`.".format(config_path))
         with io.open(config_path, 'r', encoding='utf8') as f:
-            config = yaml.safe_load(f)
+            self._config = yaml.safe_load(f)
 
         self._logger = logging.getLogger('mybot.twitter')
-        log_level = config.get('log level', logging.WARN)
+        log_level = self._config.get('log level', logging.WARN)
         self._logger.setLevel(log_level)
         ch = logging.StreamHandler()
         ch.setLevel(log_level)
@@ -40,17 +40,38 @@ class MyTwitterBot(object):
         ch.setFormatter(formatter)
         self._logger.addHandler(ch)
 
-        twitter_api_config = config['Twitter']
+        twitter_api_config = self._config['Twitter']
         self._twitter_api = twitter.Api(consumer_key=twitter_api_config['consumer key'],
                                         consumer_secret=twitter_api_config['consumer secret'],
                                         access_token_key=twitter_api_config['access token key'],
                                         access_token_secret=twitter_api_config['access token secret'])
 
-        self.context_char_size = 40
-        self._eos_char = '×'
+        self._max_num_context_tokens = 10
+        self._begin_token = '--bos--'
+        self._eos_token = '--eos--'
+        self._unk = '--unk--'
+        self._pad_index = 0
+
+        self._tweets_path = os.path.expanduser(self._config['embeddings path'])
+
+        self._logger.info("Setting up tokenizer.")
+        # TODO Keep punct as separate tokens.
+        self._tokenizer = Tokenizer(filters='!"$%&()*+,./:;<=>?[\\]^`{|}~\t\n')
+        tweets = self.get_tweets_for_training()
+        self._tokenizer.fit_on_texts(tweets)
+
+        self._embedding_dim = 300
+
+    def get_tweets_for_training(self) -> Iterable[str]:
+        result = map(self.pre_process, self.get_stored_tweets())
+        result = map(lambda t: "{} {} {}".format(self._begin_token, t, self._eos_token), result)
+        return result
+
+    def get_stored_tweets(self):
+        return pd.read_csv(self._tweets_path, encoding='utf-8', error_bad_lines=False).tweets
 
     def get_tweets(self, screen_name):
-        result = []
+        result = set()
         max_id = None
         with tqdm(desc="Getting tweets",
                   unit_scale=True, mininterval=2, unit=" tweets") as pbar:
@@ -62,26 +83,19 @@ class MyTwitterBot(object):
                     max_id = tweets[0].id
                 for tweet in tweets:
                     max_id = min(max_id, tweet.id)
-                    text = tweet.text.replace('\r', ' ').replace('\n', ' ').strip()
+                    text = tweet.text.strip()
                     if len(text) > 2:
-                        result.append(text)
+                        result.add(text)
                     pbar.update()
         self._logger.info("Found %d tweets.", len(result))
 
-        seen = set()
-        with open('tweets.csv', 'w', encoding='utf-8') as f:
-            for text in result:
-                if text not in seen:
-                    f.write(text)
-                    f.write('\n')
-                    seen.add(text)
+        pd.DataFrame(list(result), columns=['tweet']) \
+            .to_csv(self._tweets_path, encoding='utf-8', index=False)
 
         return result
 
     def run(self):
-        with open('tweets.csv', encoding='utf-8') as f:
-            old_tweets = f.readlines()
-        old_tweets = list(map(str.strip, old_tweets))
+        old_tweets = self.get_stored_tweets()
 
         with open('chars.txt', encoding='utf-8') as f:
             chars = f.read()
@@ -143,57 +157,57 @@ class MyTwitterBot(object):
         return np.argmax(probas)
 
     def train(self):
-        with open('tweets.csv', encoding='utf-8') as f:
-            text = f.read()
-        tweets = text.split('\n')
-        tweets = list(map(self.pre_process, tweets))
-
-        chars = Counter(text)
-        chars = filter(lambda c_count: c_count[1] >= 2, chars.most_common(n=26 + 10))
-        chars = map(itemgetter(0), chars)
-        chars = set(map(str.lower, chars))
-        chars |= set(string.ascii_lowercase)
-        chars |= set(string.digits)
-        chars |= set(' \'".?!#:')
-        chars = sorted(chars)
-        assert self._eos_char not in chars, "Make a new EOS char."
-        chars.append(self._eos_char)
-        chars = sorted(chars)
-
-        with open('chars.txt', 'w', encoding='utf-8') as f:
-            f.write(''.join(chars))
-
-        print('total chars:', len(chars))
-        char_indices = dict((c, i) for i, c in enumerate(chars))
-        indices_char = dict((i, c) for i, c in enumerate(chars))
 
         step = 1
-        sentences = []
-        next_chars = []
+        prefixes = []
+        next_tokens = []
 
-        updated_tweets = []
-        for tweet in tweets:
-            # Filtered our OOV chars.
-            tweet = ''.join([c for c in tweet if c in chars])
-            updated_tweets.append(tweet)
-        tweets = updated_tweets
-        del updated_tweets
+        tweets = self.get_tweets_for_training()
+        sequences = self._tokenizer.texts_to_sequences_generator(tweets)
 
-        for tweet in tweets:
-            tweet += self._eos_char
-            for i in range(0, len(tweet) - self.context_char_size, step):
-                sentences.append(tweet[i: i + self.context_char_size])
-                next_chars.append(tweet[i + self.context_char_size])
-        print('nb sequences:', len(sentences))
+        for tweet in sequences:
+            # Get sequences with just the first token,
+            # and window through until we have sequences up to before the last token.
+            for start_index in range(-self._max_num_context_tokens + 1, len(tweet) - self._max_num_context_tokens,
+                                     step):
+                prefixes.append(tweet[max(0, start_index): start_index + self._max_num_context_tokens])
+                next_tokens.append(tweet[start_index + self._max_num_context_tokens + 1])
 
-        x = np.zeros((len(sentences), self.context_char_size, len(chars)), dtype=np.bool)
-        y = np.zeros((len(sentences), len(chars)), dtype=np.bool)
-        for i, sentence in enumerate(sentences):
-            for t, char in enumerate(sentence):
-                x[i, t, char_indices[char]] = 1
-            y[i, char_indices[next_chars[i]]] = 1
+        prefixes = pad_sequences(prefixes)
+
+        self._logger.info("Setting up the model.")
+        self._logger.info("Loading embeddings.")
+        embeddings_index = {}
+        with open(os.path.expanduser(self._config['embeddings path'])) as f:
+            for line in f:
+                values = line.split()
+                word = values[0]
+                coefs = np.asarray(values[1:], dtype='float32')
+                embeddings_index[word] = coefs
+
+        token_index = self._tokenizer.word_index
+        num_tokens = len(token_index)
+        self._logger.info("Found %s unique tokens.", num_tokens)
+
+        # Add one for padding.
+        embeddings_matrix = np.zeros((num_tokens + 1, self._embedding_dim))
+        embeddings_matrix[self._pad_index] = np.zeros((self._embedding_dim,), dtype=np.float32)
+        for i, token in enumerate(token_index, start=1):
+            embedding_vec = embeddings_index.get(token)
+            if embedding_vec is not None:
+                embeddings_matrix[i] = embedding_vec
+            else:
+                # Make a new vector.
+                embeddings_matrix[i] = np.random.uniform(low=-0.5, high=0.5, size=(self._embedding_dim,)).astype(
+                    np.float32)
+
+        embedding_layer = Embedding(num_tokens, self._embedding_dim,
+                                    weights=[embeddings_matrix],
+                                    input_length=self._max_num_context_tokens,
+                                    trainable=True)
 
         model = Sequential()
+        model.add(embedding_layer)
 
         model.add(Bidirectional(GRU(32, return_sequences=True,
                                     # dropout=0.1, recurrent_dropout=0.1
@@ -213,7 +227,7 @@ class MyTwitterBot(object):
         # model.add(Flatten())
 
         # model.add(Dropout(0.2))
-        model.add(Dense(len(chars)))
+        model.add(Dense(num_tokens))
         model.add(Activation('softmax'))
 
         optimizer = RMSprop(lr=0.1, decay=0.1)
@@ -254,23 +268,29 @@ class MyTwitterBot(object):
 
         print_callback = LambdaCallback(on_epoch_end=on_epoch_end)
 
-        model.fit(x, y,
+        model.fit(prefixes, next_tokens,
                   verbose=1,
                   batch_size=128,
                   epochs=60,
-                  callbacks=[print_callback,
-                             # TensorBoard('tensorboard_logs', histogram_freq=1),
-                             ModelCheckpoint('model.h5', verbose=1)])
-
-
-def collect_tweets(screen_name):
-    injector = Injector()
-    b = injector.get(MyTwitterBot)
-    b.get_tweets(screen_name)
+                  callbacks=[
+                      # print_callback,
+                      # TensorBoard('tensorboard_logs', histogram_freq=1),
+                      ModelCheckpoint('model.h5', verbose=1)])
 
 
 if __name__ == '__main__':
     injector = Injector()
     b: MyTwitterBot = injector.get(MyTwitterBot)
+    # b.get_tweets('chelsdelaney11')
     b.train()
     # b.run()
+
+    # with open('tweets.csv', encoding='utf-8') as f:
+    #     text = f.read()
+    # wordcloud = WordCloud(max_font_size=30).generate(text)
+    # import matplotlib.pyplot as plt
+    #
+    # plt.imshow(wordcloud, interpolation='bilinear')
+    # plt.axis("off")
+    # plt.show()
+    #
