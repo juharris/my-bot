@@ -2,7 +2,7 @@ import io
 import logging
 import os
 import random
-import sys
+import time
 from typing import List, Iterable
 
 import numpy as np
@@ -10,7 +10,7 @@ import pandas as pd
 import twitter
 import yaml
 from injector import inject, Injector, singleton
-from keras.callbacks import LambdaCallback, ModelCheckpoint
+from keras.callbacks import LambdaCallback, ModelCheckpoint, TensorBoard
 from keras.layers import Activation, Bidirectional, Dense, Embedding, GRU
 from keras.models import Sequential, load_model
 from keras.optimizers import RMSprop
@@ -49,10 +49,9 @@ class MyTwitterBot(object):
         self._max_num_context_tokens = 10
         self._begin_token = '--bos--'
         self._eos_token = '--eos--'
-        self._unk = '--unk--'
         self._pad_index = 0
 
-        self._tweets_path = os.path.expanduser(self._config['embeddings path'])
+        self._tweets_path = os.path.expanduser(self._config['tweets path'])
 
         self._logger.info("Setting up tokenizer.")
         # TODO Keep punct as separate tokens.
@@ -68,7 +67,7 @@ class MyTwitterBot(object):
         return result
 
     def get_stored_tweets(self):
-        return pd.read_csv(self._tweets_path, encoding='utf-8', error_bad_lines=False).tweets
+        return pd.read_csv(self._tweets_path, encoding='utf-8').tweet
 
     def get_tweets(self, screen_name):
         result = set()
@@ -157,40 +156,48 @@ class MyTwitterBot(object):
         return np.argmax(probas)
 
     def train(self):
-
         step = 1
         prefixes = []
-        next_tokens = []
+        y = []
 
         tweets = self.get_tweets_for_training()
         sequences = self._tokenizer.texts_to_sequences_generator(tweets)
+        token_index = self._tokenizer.word_index
+        id2token = {index: token for (token, index) in token_index.items()}
 
-        for tweet in sequences:
+        # Cache one-hot vectors for memory efficiency.
+        token_one_hot_vectors = {}
+        for tweet in tqdm(sequences,
+                          desc="Building training data",
+                          unit_scale=True, mininterval=2, unit=" tweets"):
             # Get sequences with just the first token,
             # and window through until we have sequences up to before the last token.
-            for start_index in range(-self._max_num_context_tokens + 1, len(tweet) - self._max_num_context_tokens,
-                                     step):
-                prefixes.append(tweet[max(0, start_index): start_index + self._max_num_context_tokens])
-                next_tokens.append(tweet[start_index + self._max_num_context_tokens + 1])
+            for next_token_index in range(1, len(tweet), step):
+                prefixes.append(tweet[max(0, next_token_index - b._max_num_context_tokens): next_token_index])
+                token_vec = token_one_hot_vectors.get(tweet[next_token_index])
+                if token_vec is None:
+                    # Add 1 since token index starts at 1.
+                    token_vec = np.zeros(len(token_index) + 1, dtype=np.int32)
+                    token_vec[tweet[next_token_index]] = 1
+                    token_one_hot_vectors[tweet[next_token_index]] = token_vec
+                y.append(token_vec)
 
-        prefixes = pad_sequences(prefixes)
+        prefixes = pad_sequences(prefixes, maxlen=self._max_num_context_tokens)
+        y = np.array(y)
 
         self._logger.info("Setting up the model.")
-        self._logger.info("Loading embeddings.")
         embeddings_index = {}
-        with open(os.path.expanduser(self._config['embeddings path'])) as f:
-            for line in f:
+        with open(os.path.expanduser(self._config['embeddings path']), encoding='utf-8') as f:
+            for line in tqdm(f,
+                             desc="Loading embeddings",
+                             unit_scale=True, mininterval=2, unit=" tokens"):
                 values = line.split()
                 word = values[0]
-                coefs = np.asarray(values[1:], dtype='float32')
+                coefs = np.asarray(values[1:], dtype=np.float32)
                 embeddings_index[word] = coefs
 
-        token_index = self._tokenizer.word_index
-        num_tokens = len(token_index)
-        self._logger.info("Found %s unique tokens.", num_tokens)
-
-        # Add one for padding.
-        embeddings_matrix = np.zeros((num_tokens + 1, self._embedding_dim))
+        # Add one for padding and since token index starts at 1.
+        embeddings_matrix = np.zeros((len(token_index) + 1, self._embedding_dim))
         embeddings_matrix[self._pad_index] = np.zeros((self._embedding_dim,), dtype=np.float32)
         for i, token in enumerate(token_index, start=1):
             embedding_vec = embeddings_index.get(token)
@@ -201,22 +208,17 @@ class MyTwitterBot(object):
                 embeddings_matrix[i] = np.random.uniform(low=-0.5, high=0.5, size=(self._embedding_dim,)).astype(
                     np.float32)
 
-        embedding_layer = Embedding(num_tokens, self._embedding_dim,
-                                    weights=[embeddings_matrix],
-                                    input_length=self._max_num_context_tokens,
-                                    trainable=True)
-
         model = Sequential()
-        model.add(embedding_layer)
+        model.add(Embedding(embeddings_matrix.shape[0], embeddings_matrix.shape[1],
+                            weights=[embeddings_matrix],
+                            input_length=self._max_num_context_tokens,
+                            trainable=True))
 
-        model.add(Bidirectional(GRU(32, return_sequences=True,
-                                    # dropout=0.1, recurrent_dropout=0.1
-                                    ),
-                                input_shape=(self.context_char_size, len(chars))
-                                ))
-        # model.add(Dropout(0.2))
-        model.add(Bidirectional(GRU(32,
-                                    # dropout=0.1, recurrent_dropout=0.1
+        model.add(Bidirectional(GRU(64, return_sequences=True,
+                                    dropout=0.1, recurrent_dropout=0.1
+                                    )))
+        model.add(Bidirectional(GRU(64,
+                                    dropout=0.1, recurrent_dropout=0.1
                                     )))
 
         # model.add(Conv1D(filters=1,
@@ -227,7 +229,8 @@ class MyTwitterBot(object):
         # model.add(Flatten())
 
         # model.add(Dropout(0.2))
-        model.add(Dense(num_tokens))
+        # Add 1 since token index starts at 1.
+        model.add(Dense(y[0].shape[0]))
         model.add(Activation('softmax'))
 
         optimizer = RMSprop(lr=0.1, decay=0.1)
@@ -236,46 +239,42 @@ class MyTwitterBot(object):
 
         def on_epoch_end(epoch, logs):
             print()
-            print('----- Generating text after Epoch: %d' % epoch)
+            print("----- Generating text after epoch: {}".format(epoch))
 
-            tweet_index = random.randint(0, len(tweets))
             for diversity in [None, 0.2, 0.5, 1.0, 1.2]:
-                print('----- diversity:{}'.format(diversity))
+                print("----- diversity: {}".format(diversity))
 
-                sentence = tweets[tweet_index][:self.context_char_size]
-                generated = sentence
-                print('----- Generating with seed: "' + sentence + '"')
-                sys.stdout.write(generated)
-
-                for i in range(179 - self.context_char_size):
-                    x_pred = np.zeros((1, self.context_char_size, len(chars)))
-                    for t, char in enumerate(sentence):
-                        x_pred[0, t, char_indices[char]] = 1.
-
+                sentence = [token_index[self._begin_token]]
+                print("----- Generating with seed: \"{}\"".format(self._begin_token))
+                for i in range(179):
+                    x_pred = pad_sequences([sentence], maxlen=self._max_num_context_tokens)
                     preds = model.predict(x_pred, verbose=0)[0]
                     next_index = self.sample(preds, diversity)
-                    next_char = indices_char[next_index]
+                    next_token = id2token[next_index]
 
-                    if next_char == self._eos_char:
+                    if next_token == self._eos_token:
                         break
 
-                    generated += next_char
-                    sentence = sentence[1:] + next_char
-
-                    sys.stdout.write(next_char)
-                    sys.stdout.flush()
+                    sentence.append(next_index)
+                    print(next_token, end=' ')
                 print()
 
         print_callback = LambdaCallback(on_epoch_end=on_epoch_end)
 
-        model.fit(prefixes, next_tokens,
+        validation_split = 0.1
+        callbacks = [
+            print_callback,
+            ModelCheckpoint('model.h5', verbose=1)]
+        if validation_split > 0:
+            os.makedirs('tensorboard_logs', exist_ok=True)
+            callbacks.append(TensorBoard('tensorboard_logs/{}'.format(int(time.time())),
+                                         histogram_freq=1))
+        model.fit(prefixes, y,
+                  validation_split=validation_split,
                   verbose=1,
                   batch_size=128,
                   epochs=60,
-                  callbacks=[
-                      # print_callback,
-                      # TensorBoard('tensorboard_logs', histogram_freq=1),
-                      ModelCheckpoint('model.h5', verbose=1)])
+                  callbacks=callbacks)
 
 
 if __name__ == '__main__':
