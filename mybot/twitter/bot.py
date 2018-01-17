@@ -5,13 +5,14 @@ import random
 import time
 from typing import List, Iterable
 
+import keras.backend as K
 import numpy as np
 import pandas as pd
 import twitter
 import yaml
 from injector import inject, Injector, singleton
 from keras.callbacks import LambdaCallback, ModelCheckpoint, TensorBoard
-from keras.layers import Activation, Bidirectional, Dense, Embedding, GRU
+from keras.layers import Activation, Bidirectional, Dense, Embedding, LSTM
 from keras.models import Sequential, load_model
 from keras.optimizers import RMSprop
 from keras.preprocessing.sequence import pad_sequences
@@ -94,12 +95,7 @@ class MyTwitterBot(object):
         return result
 
     def run(self):
-        old_tweets = self.get_stored_tweets()
-
-        with open('chars.txt', encoding='utf-8') as f:
-            chars = f.read()
-        char_indices = dict((c, i) for i, c in enumerate(chars))
-
+        # FIXME Update for word based model.
         model = load_model('model.h5')
 
         while True:
@@ -145,15 +141,17 @@ class MyTwitterBot(object):
         """
         Sample an index from a probability array.
         """
-        if temperature is not None:
+        if temperature is None:
+            preds = K.eval(K.softmax(preds))
+            preds = np.random.multinomial(1, preds, 1)
+        elif temperature != 'argmax':
             preds = np.asarray(preds).astype('float64')
             preds = np.log(preds) / temperature
             exp_preds = np.exp(preds)
             preds = exp_preds / np.sum(exp_preds)
-            probas = np.random.multinomial(1, preds, 1)
-        else:
-            probas = preds
-        return np.argmax(probas)
+            preds = np.random.multinomial(1, preds, 1)
+
+        return np.argmax(preds)
 
     def train(self):
         step = 1
@@ -187,14 +185,16 @@ class MyTwitterBot(object):
 
         self._logger.info("Setting up the model.")
         embeddings_index = {}
+        # TODO Load embeddings right into matrix.
         with open(os.path.expanduser(self._config['embeddings path']), encoding='utf-8') as f:
             for line in tqdm(f,
                              desc="Loading embeddings",
                              unit_scale=True, mininterval=2, unit=" tokens"):
-                values = line.split()
-                word = values[0]
-                coefs = np.asarray(values[1:], dtype=np.float32)
-                embeddings_index[word] = coefs
+                values = line.split(maxsplit=1)
+                token = values[0]
+                if token in token_index:
+                    coefs = np.asarray(values[1].split(), dtype=np.float32)
+                    embeddings_index[token] = coefs
 
         # Add one for padding and since token index starts at 1.
         embeddings_matrix = np.zeros((len(token_index) + 1, self._embedding_dim))
@@ -205,6 +205,8 @@ class MyTwitterBot(object):
                 embeddings_matrix[i] = embedding_vec
             else:
                 # Make a new vector.
+                # FIXME Make new vec with same magnitude as others.
+                # FIXME Make new vec far from others.
                 embeddings_matrix[i] = np.random.uniform(low=-0.5, high=0.5, size=(self._embedding_dim,)).astype(
                     np.float32)
 
@@ -214,12 +216,12 @@ class MyTwitterBot(object):
                             input_length=self._max_num_context_tokens,
                             trainable=True))
 
-        model.add(Bidirectional(GRU(64, return_sequences=True,
-                                    dropout=0.1, recurrent_dropout=0.1
-                                    )))
-        model.add(Bidirectional(GRU(64,
-                                    dropout=0.1, recurrent_dropout=0.1
-                                    )))
+        model.add(Bidirectional(LSTM(256, return_sequences=True,
+                                     # dropout=0.1, recurrent_dropout=0.1
+                                     )))
+        model.add(Bidirectional(LSTM(256,
+                                     # dropout=0.1, recurrent_dropout=0.1
+                                     )))
 
         # model.add(Conv1D(filters=1,
         #                  kernel_size=16,
@@ -230,10 +232,10 @@ class MyTwitterBot(object):
 
         # model.add(Dropout(0.2))
         # Add 1 since token index starts at 1.
-        model.add(Dense(y[0].shape[0]))
+        model.add(Dense(y.shape[1]))
         model.add(Activation('softmax'))
 
-        optimizer = RMSprop(lr=0.1, decay=0.1)
+        optimizer = RMSprop(lr=0.01, decay=0.01)
         model.compile(loss='categorical_crossentropy', optimizer=optimizer)
         model.summary()
 
@@ -241,7 +243,7 @@ class MyTwitterBot(object):
             print()
             print("----- Generating text after epoch: {}".format(epoch))
 
-            for diversity in [None, 0.2, 0.5, 1.0, 1.2]:
+            for diversity in ['argmax', None, 0.2, 0.5, 1.0, 1.2]:
                 print("----- diversity: {}".format(diversity))
 
                 sentence = [token_index[self._begin_token]]
@@ -256,12 +258,16 @@ class MyTwitterBot(object):
                         break
 
                     sentence.append(next_index)
-                    print(next_token, end=' ')
+                    try:
+                        print(next_token, end=" ")
+                    except:
+                        print("ERR", end=" ")
                 print()
 
         print_callback = LambdaCallback(on_epoch_end=on_epoch_end)
 
-        validation_split = 0.1
+        # Mainly just do validation so that we can TensorBoard.
+        validation_split = 0.02
         callbacks = [
             print_callback,
             ModelCheckpoint('model.h5', verbose=1)]
