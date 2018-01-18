@@ -1,7 +1,7 @@
 import io
+import json
 import logging
 import os
-import random
 import time
 from typing import List, Iterable
 
@@ -62,6 +62,8 @@ class MyTwitterBot(object):
 
         self._embedding_dim = 300
 
+        self._max_tweet_chars = 180
+
     def get_tweets_for_training(self) -> Iterable[str]:
         result = map(self.pre_process, self.get_stored_tweets())
         result = map(lambda t: "{} {} {}".format(self._begin_token, t, self._eos_token), result)
@@ -95,35 +97,32 @@ class MyTwitterBot(object):
         return result
 
     def run(self):
-        # FIXME Update for word based model.
         model = load_model('model.h5')
+        with open('id2token.json', encoding='utf-8') as f:
+            id2token = json.load(f)
+        id2token = {int(index): token for (index, token) in id2token.items()}
+        token2id = {token: index for (index, token) in id2token.items()}
 
         while True:
-            # Pick random tweet to start with.
-            tweet = random.choice(old_tweets)
+            sentence = [token2id[self._begin_token]]
+            generated = []
 
-            sentence = tweet[:self.context_char_size]
-            generated = sentence
+            for _ in range(40):
+                x_pred = pad_sequences([sentence], maxlen=self._max_num_context_tokens)
+                preds = model.predict(x_pred)[0]
+                next_index = self.sample(preds, temperature=None)
+                next_token = id2token.get(next_index)
 
-            # 179 just in case.
-            for i in range(179 - self.context_char_size):
-                x_pred = np.zeros((1, self.context_char_size, len(chars)))
-                for t, char in enumerate(sentence):
-                    x_pred[0, t, char_indices[char]] = 1.
-
-                preds = model.predict(x_pred, verbose=0)[0]
-                next_index = self.sample(preds)
-                next_char = chars[next_index]
-
-                if next_char == self._eos_char:
+                if next_token == self._eos_token:
                     break
 
-                generated += next_char
-                sentence = sentence[1:] + next_char
+                if next_token is not None:
+                    sentence.append(next_index)
+                    generated.append(next_token)
 
+            generated = " ".join(generated)
             # self._twitter_api.PostUpdate(generated)
-            self._logger.info("With seed: %s\n  Generated: \"%s\"",
-                              generated[:self.context_char_size],
+            self._logger.info("Generated: \"%s\"",
                               generated)
             # Wait 1 hour.
             # time.sleep(60 * 60)
@@ -162,6 +161,8 @@ class MyTwitterBot(object):
         sequences = self._tokenizer.texts_to_sequences_generator(tweets)
         token_index = self._tokenizer.word_index
         id2token = {index: token for (token, index) in token_index.items()}
+        with open('id2token.json', 'w', encoding='utf-8') as f:
+            f.write(json.dumps(id2token, separators=(',', ':')))
 
         # Cache one-hot vectors for memory efficiency.
         token_one_hot_vectors = {}
@@ -248,20 +249,21 @@ class MyTwitterBot(object):
 
                 sentence = [token_index[self._begin_token]]
                 print("----- Generating with seed: \"{}\"".format(self._begin_token))
-                for i in range(179):
+                for i in range(40):
                     x_pred = pad_sequences([sentence], maxlen=self._max_num_context_tokens)
                     preds = model.predict(x_pred, verbose=0)[0]
                     next_index = self.sample(preds, diversity)
-                    next_token = id2token[next_index]
+                    next_token = id2token.get(next_index)
 
                     if next_token == self._eos_token:
                         break
 
-                    sentence.append(next_index)
-                    try:
-                        print(next_token, end=" ")
-                    except:
-                        print("ERR", end=" ")
+                    if next_token is not None:
+                        sentence.append(next_index)
+                        try:
+                            print(next_token, end=" ")
+                        except:
+                            print("ERR", end=" ")
                 print()
 
         print_callback = LambdaCallback(on_epoch_end=on_epoch_end)
