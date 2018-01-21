@@ -1,5 +1,6 @@
 .idea
 
 *.h5
+*.json
 
 tensorboard_logs/

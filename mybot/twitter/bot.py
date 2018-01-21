@@ -1,4 +1,5 @@
 import io
+import itertools
 import json
 import logging
 import os
@@ -42,21 +43,25 @@ class MyTwitterBot(object):
         self._logger.addHandler(ch)
 
         twitter_api_config = self._config['Twitter']
-        self._twitter_api = twitter.Api(consumer_key=twitter_api_config['consumer key'],
-                                        consumer_secret=twitter_api_config['consumer secret'],
-                                        access_token_key=twitter_api_config['access token key'],
-                                        access_token_secret=twitter_api_config['access token secret'])
+        self._twitter_api = twitter.Api(
+            sleep_on_rate_limit=True,
+            consumer_key=twitter_api_config['consumer key'],
+            consumer_secret=twitter_api_config['consumer secret'],
+            access_token_key=twitter_api_config['access token key'],
+            access_token_secret=twitter_api_config['access token secret'])
 
         self._max_num_context_tokens = 10
         self._begin_token = '--bos--'
         self._eos_token = '--eos--'
+        self._pad_token = '--pad--'
         self._pad_index = 0
 
         self._tweets_path = os.path.expanduser(self._config['tweets path'])
+        self._following_tweets_path = os.path.expanduser(self._config['following tweets path'])
 
         self._logger.info("Setting up tokenizer.")
         # TODO Keep punct as separate tokens.
-        self._tokenizer = Tokenizer(filters='!"$%&()*+,./:;<=>?[\\]^`{|}~\t\n')
+        self._tokenizer = Tokenizer(filters='!"$%&()*+,./:;<=>?[\\]^`{|}~\t\r\n')
         tweets = self.get_tweets_for_training()
         self._tokenizer.fit_on_texts(tweets)
 
@@ -64,21 +69,20 @@ class MyTwitterBot(object):
 
         self._max_tweet_chars = 180
 
-    def get_tweets_for_training(self) -> Iterable[str]:
-        result = map(self.pre_process, self.get_stored_tweets())
-        result = map(lambda t: "{} {} {}".format(self._begin_token, t, self._eos_token), result)
-        return result
-
-    def get_stored_tweets(self):
-        return pd.read_csv(self._tweets_path, encoding='utf-8').tweet
-
-    def get_tweets(self, screen_name):
+    def _get_tweets(self, user_id=None, screen_name: str = None) -> set:
         result = set()
         max_id = None
-        with tqdm(desc="Getting tweets",
+        if screen_name:
+            desc = "Getting tweets from @{}".format(screen_name)
+        else:
+            desc = "Getting tweets from {}".format(user_id)
+        with tqdm(desc=desc,
                   unit_scale=True, mininterval=2, unit=" tweets") as pbar:
             while True:
-                tweets: List[twitter.Status] = self._twitter_api.GetUserTimeline(screen_name=screen_name, max_id=max_id)
+                tweets: List[twitter.Status] = self._twitter_api.GetUserTimeline(
+                    user_id=user_id,
+                    screen_name=screen_name,
+                    max_id=max_id)
                 if len(tweets) == 0:
                     break
                 if max_id is None:
@@ -90,10 +94,47 @@ class MyTwitterBot(object):
                         result.add(text)
                     pbar.update()
         self._logger.info("Found %d tweets.", len(result))
+        return result
+
+    def get_friend_tweets(self, screen_name):
+        """
+        Get tweets of the people `screen_name` is following.
+        :param screen_name: A Twitter username.
+        """
+        following_ids = self._twitter_api.GetFriendIDs(screen_name=screen_name)
+        self._logger.info("Found %d friends", len(following_ids))
+        result = []
+        for friend_id in following_ids:
+            result.extend(self._get_tweets(user_id=friend_id))
+
+            pd.DataFrame(list(result), columns=['tweet']) \
+                .to_csv(self._following_tweets_path, encoding='utf-8', index=False)
+
+        return result
+
+    def get_stored_following_tweets(self):
+        return pd.read_csv(self._following_tweets_path, encoding='utf-8').tweet
+
+    def get_stored_tweets(self):
+        return pd.read_csv(self._tweets_path, encoding='utf-8').tweet
+
+    def get_tweets(self, screen_name):
+        result = self._get_tweets(screen_name=screen_name)
 
         pd.DataFrame(list(result), columns=['tweet']) \
             .to_csv(self._tweets_path, encoding='utf-8', index=False)
 
+        return result
+
+    def get_tweets_for_pre_training(self) -> Iterable[str]:
+        result = itertools.chain(self.get_stored_following_tweets(), self.get_stored_tweets())
+        result = map(self.pre_process, result)
+        result = map(lambda t: "{} {} {}".format(self._begin_token, t, self._eos_token), result)
+        return result
+
+    def get_tweets_for_training(self) -> Iterable[str]:
+        result = map(self.pre_process, self.get_stored_tweets())
+        result = map(lambda t: "{} {} {}".format(self._begin_token, t, self._eos_token), result)
         return result
 
     def run(self):
@@ -153,92 +194,19 @@ class MyTwitterBot(object):
         return np.argmax(preds)
 
     def train(self):
-        step = 1
-        prefixes = []
-        y = []
-
-        tweets = self.get_tweets_for_training()
-        sequences = self._tokenizer.texts_to_sequences_generator(tweets)
+        tweets = self.get_tweets_for_pre_training()
         token_index = self._tokenizer.word_index
+        assert self._pad_index == 0
+        token_index[self._pad_token] = self._pad_index
+        self._logger.info("Token index size = %d", len(token_index))
         id2token = {index: token for (token, index) in token_index.items()}
         with open('id2token.json', 'w', encoding='utf-8') as f:
             f.write(json.dumps(id2token, separators=(',', ':')))
 
-        # Cache one-hot vectors for memory efficiency.
-        token_one_hot_vectors = {}
-        for tweet in tqdm(sequences,
-                          desc="Building training data",
-                          unit_scale=True, mininterval=2, unit=" tweets"):
-            # Get sequences with just the first token,
-            # and window through until we have sequences up to before the last token.
-            for next_token_index in range(1, len(tweet), step):
-                prefixes.append(tweet[max(0, next_token_index - b._max_num_context_tokens): next_token_index])
-                token_vec = token_one_hot_vectors.get(tweet[next_token_index])
-                if token_vec is None:
-                    # Add 1 since token index starts at 1.
-                    token_vec = np.zeros(len(token_index) + 1, dtype=np.int32)
-                    token_vec[tweet[next_token_index]] = 1
-                    token_one_hot_vectors[tweet[next_token_index]] = token_vec
-                y.append(token_vec)
-
-        prefixes = pad_sequences(prefixes, maxlen=self._max_num_context_tokens)
-        y = np.array(y)
+        prefixes, y = self._get_training_data(token_index, tweets)
 
         self._logger.info("Setting up the model.")
-        embeddings_index = {}
-        # TODO Load embeddings right into matrix.
-        with open(os.path.expanduser(self._config['embeddings path']), encoding='utf-8') as f:
-            for line in tqdm(f,
-                             desc="Loading embeddings",
-                             unit_scale=True, mininterval=2, unit=" tokens"):
-                values = line.split(maxsplit=1)
-                token = values[0]
-                if token in token_index:
-                    coefs = np.asarray(values[1].split(), dtype=np.float32)
-                    embeddings_index[token] = coefs
-
-        # Add one for padding and since token index starts at 1.
-        embeddings_matrix = np.zeros((len(token_index) + 1, self._embedding_dim))
-        embeddings_matrix[self._pad_index] = np.zeros((self._embedding_dim,), dtype=np.float32)
-        for i, token in enumerate(token_index, start=1):
-            embedding_vec = embeddings_index.get(token)
-            if embedding_vec is not None:
-                embeddings_matrix[i] = embedding_vec
-            else:
-                # Make a new vector.
-                # FIXME Make new vec with same magnitude as others.
-                # FIXME Make new vec far from others.
-                embeddings_matrix[i] = np.random.uniform(low=-0.5, high=0.5, size=(self._embedding_dim,)).astype(
-                    np.float32)
-
-        model = Sequential()
-        model.add(Embedding(embeddings_matrix.shape[0], embeddings_matrix.shape[1],
-                            weights=[embeddings_matrix],
-                            input_length=self._max_num_context_tokens,
-                            trainable=True))
-
-        model.add(Bidirectional(LSTM(256, return_sequences=True,
-                                     # dropout=0.1, recurrent_dropout=0.1
-                                     )))
-        model.add(Bidirectional(LSTM(256,
-                                     # dropout=0.1, recurrent_dropout=0.1
-                                     )))
-
-        # model.add(Conv1D(filters=1,
-        #                  kernel_size=16,
-        #                  strides=1,
-        #                  padding='causal',
-        #                  input_shape=(x.shape[1], x.shape[2])))
-        # model.add(Flatten())
-
-        # model.add(Dropout(0.2))
-        # Add 1 since token index starts at 1.
-        model.add(Dense(y.shape[1]))
-        model.add(Activation('softmax'))
-
-        optimizer = RMSprop(lr=0.01, decay=0.01)
-        model.compile(loss='categorical_crossentropy', optimizer=optimizer)
-        model.summary()
+        model = self._create_model(token_index, y)
 
         def on_epoch_end(epoch, logs):
             print()
@@ -272,10 +240,28 @@ class MyTwitterBot(object):
         validation_split = 0.02
         callbacks = [
             print_callback,
+            ModelCheckpoint('pre-trained-model.h5', verbose=1)]
+        if validation_split > 0:
+            t = int(time.time())
+            os.makedirs('tensorboard_logs', exist_ok=True)
+            callbacks.append(TensorBoard('tensorboard_logs/pre-train-{}'.format(t),
+                                         histogram_freq=1))
+        model.fit(prefixes, y,
+                  validation_split=validation_split,
+                  verbose=1,
+                  batch_size=128,
+                  epochs=30,
+                  callbacks=callbacks)
+
+        self._logger.info("Done pre-training. Training on specific data.")
+
+        tweets = self.get_tweets_for_training()
+        prefixes, y = self._get_training_data(token_index, tweets)
+        callbacks = [
+            print_callback,
             ModelCheckpoint('model.h5', verbose=1)]
         if validation_split > 0:
-            os.makedirs('tensorboard_logs', exist_ok=True)
-            callbacks.append(TensorBoard('tensorboard_logs/{}'.format(int(time.time())),
+            callbacks.append(TensorBoard('tensorboard_logs/train-{}'.format(t),
                                          histogram_freq=1))
         model.fit(prefixes, y,
                   validation_split=validation_split,
@@ -284,10 +270,93 @@ class MyTwitterBot(object):
                   epochs=60,
                   callbacks=callbacks)
 
+    def _create_model(self, token_index, y):
+        embeddings_matrix = np.zeros((len(token_index), self._embedding_dim))
+        assert self._pad_index == 0
+        # Pad vector is all 0s so consider it already loaded in the first row.
+        loaded_indices = {self._pad_index}
+        with open(os.path.expanduser(self._config['embeddings path']), encoding='utf-8') as f:
+            for line in tqdm(f,
+                             desc="Loading embeddings",
+                             unit_scale=True, mininterval=2, unit=" tokens"):
+                values = line.split(maxsplit=1)
+                token = values[0]
+                index = token_index.get(token)
+                if index is not None:
+                    loaded_indices.add(index)
+                    vec = values[1].split()
+                    assert len(vec) == self._embedding_dim
+                    vec = np.asarray(vec, dtype=np.float32)
+                    embeddings_matrix[index] = vec
+        self._logger.info("Adding vectors for %d OOV tokens.",
+                          embeddings_matrix.shape[0] - len(loaded_indices))
+
+        # Handle tokens with no existing embeddings.
+        for i in range(embeddings_matrix.shape[0]):
+            if i not in loaded_indices:
+                # Make a new vector.
+                # FIXME Make new vec with same magnitude as others.
+                # FIXME Make new vec far from others.
+                embeddings_matrix[i] = np.random.uniform(low=-0.5, high=0.5, size=(self._embedding_dim,)).astype(
+                    np.float32)
+        del loaded_indices
+
+        model = Sequential()
+        model.add(Embedding(embeddings_matrix.shape[0], embeddings_matrix.shape[1],
+                            weights=[embeddings_matrix],
+                            input_length=self._max_num_context_tokens,
+                            trainable=True))
+        model.add(Bidirectional(LSTM(256, return_sequences=True,
+                                     # dropout=0.1, recurrent_dropout=0.1
+                                     )))
+        model.add(Bidirectional(LSTM(256,
+                                     # dropout=0.1, recurrent_dropout=0.1
+                                     )))
+        # model.add(Conv1D(filters=1,
+        #                  kernel_size=16,
+        #                  strides=1,
+        #                  padding='causal',
+        #                  input_shape=(x.shape[1], x.shape[2])))
+        # model.add(Flatten())
+        # model.add(Dropout(0.2))
+        # Add 1 since token index starts at 1.
+        model.add(Dense(y.shape[1]))
+        model.add(Activation('softmax'))
+        optimizer = RMSprop(lr=0.01, decay=0.01)
+        model.compile(loss='categorical_crossentropy', optimizer=optimizer)
+        model.summary()
+        return model
+
+    def _get_training_data(self, token_index, tweets):
+        step = 1
+        prefixes = []
+        y = []
+        sequences = self._tokenizer.texts_to_sequences_generator(tweets)
+        # Cache one-hot vectors for memory efficiency.
+        token_one_hot_vectors = {}
+        for tweet in tqdm(sequences,
+                          desc="Building training data",
+                          unit_scale=True, mininterval=2, unit=" tweets"):
+            # Get sequences with just the first token,
+            # and window through until we have sequences up to before the last token.
+            for next_token_index in range(1, len(tweet), step):
+                prefixes.append(tweet[max(0, next_token_index - b._max_num_context_tokens): next_token_index])
+                token_vec = token_one_hot_vectors.get(tweet[next_token_index])
+                if token_vec is None:
+                    # Add 1 since token index starts at 1.
+                    token_vec = np.zeros(len(token_index) + 1, dtype=np.int32)
+                    token_vec[tweet[next_token_index]] = 1
+                    token_one_hot_vectors[tweet[next_token_index]] = token_vec
+                y.append(token_vec)
+        prefixes = pad_sequences(prefixes, maxlen=self._max_num_context_tokens)
+        y = np.array(y)
+        return prefixes, y
+
 
 if __name__ == '__main__':
     injector = Injector()
     b: MyTwitterBot = injector.get(MyTwitterBot)
+    # b.get_friend_tweets('chelsdelaney11')
     # b.get_tweets('chelsdelaney11')
     b.train()
     # b.run()
