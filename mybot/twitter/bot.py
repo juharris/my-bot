@@ -282,9 +282,9 @@ class MyTwitterBot(object):
         t = int(time.time())
         os.makedirs('tensorboard_logs', exist_ok=True)
         callbacks = [
-            TensorBoard('tensorboard_logs/pre-train-{}'.format(t), histogram_freq=1),
+            TensorBoard('tensorboard_logs/pre-train-{}-{}'.format(screen_name, t), histogram_freq=1),
             print_callback,
-            ModelCheckpoint('pre-trained-model.h5', verbose=1)]
+            ModelCheckpoint('pre-trained-{}-model.h5'.format(screen_name), verbose=1)]
 
         # Mainly just do validation so that we can TensorBoard.
         model.fit_generator(itertools.islice(training_data_generator, 1, None),
@@ -303,9 +303,9 @@ class MyTwitterBot(object):
         sequences = tokenizer.texts_to_sequences_generator(tweets)
         training_data_generator = self._get_training_data(token_index, sequences)
         callbacks = [
-            TensorBoard('tensorboard_logs/train-{}'.format(t), histogram_freq=1),
+            TensorBoard('tensorboard_logs/train-{}-{}'.format(screen_name, t), histogram_freq=1),
             print_callback,
-            ModelCheckpoint('model.h5', verbose=1)]
+            ModelCheckpoint('model-{}.h5'.format(screen_name), verbose=1)]
 
         model.fit_generator(itertools.islice(training_data_generator, 1, None),
                             steps_per_epoch=steps_per_epoch - 1,
