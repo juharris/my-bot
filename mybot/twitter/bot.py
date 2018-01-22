@@ -1,17 +1,15 @@
-import io
 import itertools
 import json
 import logging
 import os
+import sqlite3
 import time
 from typing import List, Iterable
 
 import keras.backend as K
 import numpy as np
-import pandas as pd
 import twitter
-import yaml
-from injector import inject, Injector, singleton
+from injector import inject, Injector, ProviderOf, singleton
 from keras.callbacks import LambdaCallback, ModelCheckpoint, TensorBoard
 from keras.layers import Activation, Bidirectional, Dense, Embedding, LSTM
 from keras.models import Sequential, load_model
@@ -20,27 +18,20 @@ from keras.preprocessing.sequence import pad_sequences
 from keras.preprocessing.text import Tokenizer
 from tqdm import tqdm
 
+from mybot.twitter.constants import Configuration
+from mybot.twitter.db_module import DbModule
+from mybot.twitter.module import MyTwitterBotModule
+
 
 @singleton
 class MyTwitterBot(object):
     @inject
-    def __init__(self):
-        config_path = os.getenv('MYBOT_TWITTER_CONFIG_PATH')
-        if config_path is None:
-            config_path = os.path.expanduser('~/.my-bot/config.yaml')
-
-        print("Loading config from `{}`.".format(config_path))
-        with io.open(config_path, 'r', encoding='utf8') as f:
-            self._config = yaml.safe_load(f)
-
-        self._logger = logging.getLogger('mybot.twitter')
-        log_level = self._config.get('log level', logging.WARN)
-        self._logger.setLevel(log_level)
-        ch = logging.StreamHandler()
-        ch.setLevel(log_level)
-        formatter = logging.Formatter('%(asctime)s [%(levelname)s] - %(name)s:%(filename)s:%(funcName)s\n%(message)s')
-        ch.setFormatter(formatter)
-        self._logger.addHandler(ch)
+    def __init__(self, config: Configuration,
+                 db_provider: ProviderOf[sqlite3.Connection],
+                 logger: logging.Logger):
+        self._config = config
+        self._db_provider = db_provider
+        self._logger = logger
 
         twitter_api_config = self._config['Twitter']
         self._twitter_api = twitter.Api(
@@ -56,47 +47,12 @@ class MyTwitterBot(object):
         self._pad_token = '--pad--'
         self._pad_index = 0
 
-        self._tweets_path = os.path.expanduser(self._config['tweets path'])
-        self._following_tweets_path = os.path.expanduser(self._config['following tweets path'])
-
-        self._logger.info("Setting up tokenizer.")
-        # TODO Keep punct as separate tokens.
-        self._tokenizer = Tokenizer(filters='!"$%&()*+,./:;<=>?[\\]^`{|}~\t\r\n')
-        tweets = self.get_tweets_for_training()
-        self._tokenizer.fit_on_texts(tweets)
-
         self._embedding_dim = 300
+        self._batch_size = 192
 
         self._max_tweet_chars = 180
 
-    def _get_tweets(self, user_id=None, screen_name: str = None) -> set:
-        result = set()
-        max_id = None
-        if screen_name:
-            desc = "Getting tweets from @{}".format(screen_name)
-        else:
-            desc = "Getting tweets from {}".format(user_id)
-        with tqdm(desc=desc,
-                  unit_scale=True, mininterval=2, unit=" tweets") as pbar:
-            while True:
-                tweets: List[twitter.Status] = self._twitter_api.GetUserTimeline(
-                    user_id=user_id,
-                    screen_name=screen_name,
-                    max_id=max_id)
-                if len(tweets) == 0:
-                    break
-                if max_id is None:
-                    max_id = tweets[0].id
-                for tweet in tweets:
-                    max_id = min(max_id, tweet.id)
-                    text = tweet.text.strip()
-                    if len(text) > 2:
-                        result.add(text)
-                    pbar.update()
-        self._logger.info("Found %d tweets.", len(result))
-        return result
-
-    def get_friend_tweets(self, screen_name):
+    def collect_friend_tweets(self, screen_name):
         """
         Get tweets of the people `screen_name` is following.
         :param screen_name: A Twitter username.
@@ -105,35 +61,111 @@ class MyTwitterBot(object):
         self._logger.info("Found %d friends", len(following_ids))
         result = []
         for friend_id in following_ids:
-            result.extend(self._get_tweets(user_id=friend_id))
-
-            pd.DataFrame(list(result), columns=['tweet']) \
-                .to_csv(self._following_tweets_path, encoding='utf-8', index=False)
-
+            self.collect_tweets(user_id=friend_id)
         return result
 
-    def get_stored_following_tweets(self):
-        return pd.read_csv(self._following_tweets_path, encoding='utf-8').tweet
+    def collect_tweets(self, user_id: int = None, screen_name: str = None):
+        user = self._twitter_api.GetUser(user_id=user_id, screen_name=screen_name)
+        user_id = user.id
+        screen_name = user.screen_name
 
-    def get_stored_tweets(self):
-        return pd.read_csv(self._tweets_path, encoding='utf-8').tweet
+        db = None
+        cursor = None
 
-    def get_tweets(self, screen_name):
-        result = self._get_tweets(screen_name=screen_name)
+        try:
+            db = self._db_provider.get()
+            cursor: sqlite3.Cursor = db.cursor()
 
-        pd.DataFrame(list(result), columns=['tweet']) \
-            .to_csv(self._tweets_path, encoding='utf-8', index=False)
+            max_id = None
 
-        return result
+            cursor.execute('SELECT * FROM tweeter WHERE user_id = ? ',
+                           (user_id,))
+            users = cursor.fetchall()
+            assert len(users) <= 1
+            if len(users) == 0:
+                self._logger.info("Adding new user to DB for @%s.", screen_name)
+                cursor.execute('INSERT INTO tweeter VALUES (?, ?, ?) ',
+                               (user_id, screen_name, max_id))
+            else:
+                max_id = users[0][2]
+
+            desc = "Getting tweets from @{} with max ID {}".format(screen_name, max_id)
+            with tqdm(desc=desc,
+                      unit_scale=True, mininterval=2, unit=" tweets") as pbar:
+                while True:
+                    if max_id is not None:
+                        # Subtract 1 since getting tweets is inclusive.
+                        max_id -= 1
+                    tweets: List[twitter.Status] = self._twitter_api.GetUserTimeline(
+                        user_id=user_id,
+                        screen_name=screen_name,
+                        max_id=max_id)
+                    if len(tweets) == 0:
+                        break
+                    if max_id is None:
+                        max_id = tweets[0].id
+
+                    tweets_to_save = []
+                    for tweet in tweets:
+                        max_id = min(max_id, tweet.id)
+                        text = tweet.text.strip()
+                        if len(text) > 2:
+                            tweets_to_save.append((user_id, text))
+
+                    cursor.executemany('INSERT INTO tweet VALUES (?, ?)', tweets_to_save)
+                    cursor.execute('UPDATE tweeter SET oldest_tweet_id = ? '
+                                   '  WHERE user_id = ?',
+                                   (max_id, user_id))
+
+                    db.commit()
+                    pbar.update(n=len(tweets_to_save))
+        finally:
+            if cursor is not None:
+                cursor.close()
+            if db is not None:
+                db.close()
+
+    def get_all_stored_tweets(self):
+        db = None
+        cursor = None
+
+        try:
+            db = self._db_provider.get()
+            cursor: sqlite3.Cursor = db.cursor()
+            for tweet in cursor.execute('SELECT tweet_text FROM tweet'):
+                yield tweet[0]
+        finally:
+            if cursor is not None:
+                cursor.close()
+            if db is not None:
+                db.close()
+
+    def get_stored_tweets(self, user_id: int):
+        db = None
+        cursor = None
+
+        try:
+            db = self._db_provider.get()
+            cursor: sqlite3.Cursor = db.cursor()
+            for tweet in cursor.execute('SELECT tweet_text FROM tweet'
+                                        '  WHERE user_id = ?',
+                                        (user_id,)):
+                yield tweet[0]
+        finally:
+            if cursor is not None:
+                cursor.close()
+            if db is not None:
+                db.close()
 
     def get_tweets_for_pre_training(self) -> Iterable[str]:
-        result = itertools.chain(self.get_stored_following_tweets(), self.get_stored_tweets())
+        result = set(self.get_all_stored_tweets())
         result = map(self.pre_process, result)
         result = map(lambda t: "{} {} {}".format(self._begin_token, t, self._eos_token), result)
         return result
 
-    def get_tweets_for_training(self) -> Iterable[str]:
-        result = map(self.pre_process, self.get_stored_tweets())
+    def get_tweets_for_training(self, user_id: int) -> Iterable[str]:
+        result = set(self.get_stored_tweets(user_id))
+        result = map(self.pre_process, result)
         result = map(lambda t: "{} {} {}".format(self._begin_token, t, self._eos_token), result)
         return result
 
@@ -193,9 +225,17 @@ class MyTwitterBot(object):
 
         return np.argmax(preds)
 
-    def train(self):
-        tweets = self.get_tweets_for_pre_training()
-        token_index = self._tokenizer.word_index
+    def train(self, screen_name: str):
+        user_id = self._twitter_api.GetUser(screen_name=screen_name).id
+
+        tweets = list(self.get_tweets_for_pre_training())
+
+        self._logger.info("Setting up tokenizer.")
+        # TODO Keep punct as separate tokens.
+        tokenizer = Tokenizer(filters='!"$%&()*+,./:;<=>?[\\]^`{|}~\t\r\n')
+        tokenizer.fit_on_texts(tweets)
+
+        token_index = tokenizer.word_index
         assert self._pad_index == 0
         token_index[self._pad_token] = self._pad_index
         self._logger.info("Token index size = %d", len(token_index))
@@ -203,10 +243,13 @@ class MyTwitterBot(object):
         with open('id2token.json', 'w', encoding='utf-8') as f:
             f.write(json.dumps(id2token, separators=(',', ':')))
 
-        prefixes, y = self._get_training_data(token_index, tweets)
+        sequences = tokenizer.texts_to_sequences_generator(tweets)
+        steps_per_epoch = self._get_num_training_steps(sequences)
+        sequences = tokenizer.texts_to_sequences_generator(tweets)
+        training_data_generator = self._get_training_data(token_index, sequences)
 
         self._logger.info("Setting up the model.")
-        model = self._create_model(token_index, y)
+        model = self._create_model(token_index)
 
         def on_epoch_end(epoch, logs):
             print()
@@ -236,41 +279,43 @@ class MyTwitterBot(object):
 
         print_callback = LambdaCallback(on_epoch_end=on_epoch_end)
 
-        # Mainly just do validation so that we can TensorBoard.
-        validation_split = 0.02
+        t = int(time.time())
+        os.makedirs('tensorboard_logs', exist_ok=True)
         callbacks = [
+            TensorBoard('tensorboard_logs/pre-train-{}'.format(t), histogram_freq=1),
             print_callback,
             ModelCheckpoint('pre-trained-model.h5', verbose=1)]
-        if validation_split > 0:
-            t = int(time.time())
-            os.makedirs('tensorboard_logs', exist_ok=True)
-            callbacks.append(TensorBoard('tensorboard_logs/pre-train-{}'.format(t),
-                                         histogram_freq=1))
-        model.fit(prefixes, y,
-                  validation_split=validation_split,
-                  verbose=1,
-                  batch_size=128,
-                  epochs=30,
-                  callbacks=callbacks)
+
+        # Mainly just do validation so that we can TensorBoard.
+        model.fit_generator(itertools.islice(training_data_generator, 1, None),
+                            steps_per_epoch=steps_per_epoch - 1,
+                            validation_data=itertools.islice(training_data_generator, 1),
+                            validation_steps=1,
+                            verbose=1,
+                            epochs=30,
+                            callbacks=callbacks)
 
         self._logger.info("Done pre-training. Training on specific data.")
 
-        tweets = self.get_tweets_for_training()
-        prefixes, y = self._get_training_data(token_index, tweets)
+        tweets = list(self.get_tweets_for_training(user_id))
+        sequences = tokenizer.texts_to_sequences_generator(tweets)
+        steps_per_epoch = self._get_num_training_steps(sequences)
+        sequences = tokenizer.texts_to_sequences_generator(tweets)
+        training_data_generator = self._get_training_data(token_index, sequences)
         callbacks = [
+            TensorBoard('tensorboard_logs/train-{}'.format(t), histogram_freq=1),
             print_callback,
             ModelCheckpoint('model.h5', verbose=1)]
-        if validation_split > 0:
-            callbacks.append(TensorBoard('tensorboard_logs/train-{}'.format(t),
-                                         histogram_freq=1))
-        model.fit(prefixes, y,
-                  validation_split=validation_split,
-                  verbose=1,
-                  batch_size=128,
-                  epochs=60,
-                  callbacks=callbacks)
 
-    def _create_model(self, token_index, y):
+        model.fit_generator(itertools.islice(training_data_generator, 1, None),
+                            steps_per_epoch=steps_per_epoch - 1,
+                            validation_data=itertools.islice(training_data_generator, 1),
+                            validation_steps=1,
+                            verbose=1,
+                            epochs=60,
+                            callbacks=callbacks)
+
+    def _create_model(self, token_index):
         embeddings_matrix = np.zeros((len(token_index), self._embedding_dim))
         assert self._pad_index == 0
         # Pad vector is all 0s so consider it already loaded in the first row.
@@ -319,21 +364,29 @@ class MyTwitterBot(object):
         #                  input_shape=(x.shape[1], x.shape[2])))
         # model.add(Flatten())
         # model.add(Dropout(0.2))
-        # Add 1 since token index starts at 1.
-        model.add(Dense(y.shape[1]))
         model.add(Activation('softmax'))
+        model.add(Dense(len(token_index)))
         optimizer = RMSprop(lr=0.01, decay=0.01)
         model.compile(loss='categorical_crossentropy', optimizer=optimizer)
         model.summary()
         return model
 
-    def _get_training_data(self, token_index, tweets):
+    def _get_num_training_steps(self, sequences):
+        # Coupled with _get_training_data.
+        result = 0
+
         step = 1
-        prefixes = []
-        y = []
-        sequences = self._tokenizer.texts_to_sequences_generator(tweets)
-        # Cache one-hot vectors for memory efficiency.
-        token_one_hot_vectors = {}
+        for tweet in sequences:
+            result += len(range(1, len(tweet), step))
+
+        result = int(result / self._batch_size)
+        return result
+
+    def _get_training_data(self, token_index, sequences):
+        # Coupled with _get_num_training_steps.
+        step = 1
+        prefixes, y = [], []
+
         for tweet in tqdm(sequences,
                           desc="Building training data",
                           unit_scale=True, mininterval=2, unit=" tweets"):
@@ -341,32 +394,24 @@ class MyTwitterBot(object):
             # and window through until we have sequences up to before the last token.
             for next_token_index in range(1, len(tweet), step):
                 prefixes.append(tweet[max(0, next_token_index - b._max_num_context_tokens): next_token_index])
-                token_vec = token_one_hot_vectors.get(tweet[next_token_index])
-                if token_vec is None:
-                    # Add 1 since token index starts at 1.
-                    token_vec = np.zeros(len(token_index) + 1, dtype=np.int32)
-                    token_vec[tweet[next_token_index]] = 1
-                    token_one_hot_vectors[tweet[next_token_index]] = token_vec
+                token_vec = np.zeros(len(token_index), dtype=np.int32)
+                token_vec[tweet[next_token_index]] = 1
                 y.append(token_vec)
-        prefixes = pad_sequences(prefixes, maxlen=self._max_num_context_tokens)
-        y = np.array(y)
-        return prefixes, y
+
+                if len(prefixes) == self._batch_size:
+                    prefixes = pad_sequences(prefixes, maxlen=self._max_num_context_tokens)
+                    y = np.array(y)
+                    yield (prefixes, y)
+                    prefixes, y = [], []
 
 
 if __name__ == '__main__':
-    injector = Injector()
+    injector = Injector([
+        DbModule,
+        MyTwitterBotModule,
+    ])
     b: MyTwitterBot = injector.get(MyTwitterBot)
-    # b.get_friend_tweets('chelsdelaney11')
-    # b.get_tweets('chelsdelaney11')
-    b.train()
+    # b.collect_friend_tweets(screen_name='chelsdelaney11')
+    # b.collect_tweets(screen_name='chelsdelaney11')
+    b.train(screen_name='chelsdelaney11')
     # b.run()
-
-    # with open('tweets.csv', encoding='utf-8') as f:
-    #     text = f.read()
-    # wordcloud = WordCloud(max_font_size=30).generate(text)
-    # import matplotlib.pyplot as plt
-    #
-    # plt.imshow(wordcloud, interpolation='bilinear')
-    # plt.axis("off")
-    # plt.show()
-    #
