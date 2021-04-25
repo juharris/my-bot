@@ -1,0 +1,124 @@
+{
+	"appName": {
+		"message": "Impersonator for Teams",
+		"description": "The name of the application."
+	},
+	"appShortName": {
+		"message": "Impersonator",
+		"description": "The short_name (maximum of 12 characters recommended) is a short version of the app's name"
+	},
+	"appDescription": {
+		"message": "Reply to messages in Teams.",
+		"description": "The description of the application"
+	},
+	"browserActionTitle": {
+		"message": "Impersonator for Teams",
+		"description": "The title of the browser action button"
+	},
+	"deleteDataSuccess": {
+		"message": "Successfully deleted all of your data."
+	},
+	"userIdSectionTitle": {
+		"message": "👤 User ID"
+	},
+	"userIdExplanation": {
+		"message": "Your user ID is also your password. Do not share it. You can copy your user ID to another device or browser to import your account to that device or browser."
+	},
+	"invalidUserId": {
+		"message": "The user ID is not valid. It must be a valid UUID v4."
+	},
+	"optionsPageTitle": {
+		"message": "⚙️ Options"
+	},
+	"setUserId": {
+		"message": "Set User ID"
+	},
+	"iconOptionsSectionTitle": {
+		"message": "🙂 Icon Options"
+	},
+	"yourDataSectionTitle": {
+		"message": "💿 Your Data"
+	},
+	"downloadYourDataButton": {
+		"message": "Download all"
+	},
+	"themeSectionTitle": {
+		"message": "🎨 Theme"
+	},
+	"themePreferenceDescription": {
+		"message": "Changing the theme will not effect this page until you reload the page."
+	},
+	"advancedSectionTitle": {
+		"message": "🤓 Advanced"
+	},
+	"serviceUrlLabel": {
+		"message": "Service URL"
+	},
+	"setServiceUrl": {
+		"message": "Set service URL"
+	},
+	"resetServiceUrl": {
+		"message": "Reset service URL"
+	},
+	"deleteAllUserDataConfirmation": {
+		"message": "Delete all of your data? (this cannot be undone)",
+		"description": "Confirm if all of the user's data should be deleted"
+	},
+	"errorCode_INVALID_URL": {
+		"message": "The URL is not valid."
+	},
+	"errorCode_URL_TOO_LONG": {
+		"message": "The URL is too long. It might contain private information."
+	},
+	"badgesPageTitle": {
+		"message": "🏆 Badges 🎉"
+	},
+	"badgeSummaryTitle": {
+		"message": "Summary"
+	},
+	"yourBadgesTitle": {
+		"message": "Your Badges"
+	},
+	"noBadges": {
+		"message": "You don't have any badges yet. Keep rating pages to earn badges."
+	},
+	"errorGettingBadges": {
+		"message": "There was an error getting your badges."
+	},
+	"errorGettingHistory": {
+		"message": "There was an error getting your history."
+	},
+	"noHistory": {
+		"message": "You haven't rated any pages yet."
+	},
+	"deleteSelectedPagesConfirmation": {
+		"message": "Are you sure you want to delete the selected item(s) from your history? You will also lose the associated badges."
+	},
+	"deleteUserPageReactionsSuccess": {
+		"message": "Successfully deleted the history for the selected page(s)."
+	},
+	"currentReactionsIdentifier": {
+		"message": "Your current reaction(s): "
+	},
+	"badgesIdentifier": {
+		"message": "🏆 Your badge(s): "
+	},
+	"badge_FIRST_REACTION": {
+		"message": "🥇 1st Reaction"
+	},
+	"badge_ONE_YEAR": {
+		"message": "🎂 1 Year Anniversary"
+	},
+	"badge_ONE_HUNDRED_PAGES": {
+		"message": "💯 Pages 📄"
+	},
+	"badge_ONE_HUNDRED_EMOJIS": {
+		"message": "💯 Emojis 🙂"
+	},
+	"badge_ONE_HUNDRED_BADGES": {
+		"message": "💯 Badges 🏆"
+	},
+	"earnedTimeIdentifier": {
+		"message": "📅: "
+	}
+}
