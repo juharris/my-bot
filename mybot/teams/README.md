@@ -2,11 +2,11 @@
 
 Reply to messages in Teams.
 
+<!--
 # Downloads
 You can download the extension for various browsers:
 * [Chrome/Brave/Edge](TODO)
-
-TODO Use https://stackoverflow.com/a/48134114/1226799
+-->
 
 # Dev
 
