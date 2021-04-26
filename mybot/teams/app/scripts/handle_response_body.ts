@@ -9,8 +9,14 @@ export function handleResponse(responseBody: any, requestHeaders: any) {
 					resource = resource.lastMessage
 				}
 				let messageText
-				const sentTime = resource.composetime
-				const receivedTime = resource.originalarrivaltime
+				if (resource.composetime) {
+					const sentTime = new Date(resource.composetime)
+					// Check if it was sent in the last 1 minute.
+					if (new Date().getTime() - sentTime.getTime() > 60 * 1000) {
+						continue
+					}
+				}
+				// const receivedTime = resource.originalarrivaltime
 				const from = resource.imdisplayname
 				const toId = resource.to
 				// Other types: messagetype: "Control/Typing", contenttype: "Application/Message"
@@ -36,24 +42,29 @@ export function handleResponse(responseBody: any, requestHeaders: any) {
 	}
 }
 
-function getResponse(from: string, messageText: string): string | undefined {
-	// TODO Get from browser.sync
-	// TODO Look into handling rich text with markdown/HTML. Might need to send a different message type.
+class Response {
+	constructor(
+		public text: string,
+		public messageType: 'Text' | 'RichText/Html' = 'Text') { }
+}
+
+function getResponse(from: string, messageText: string): Response | undefined {
+	// TODO Get rules from `browser.storage.sync`.
 	const pattern = new RegExp("^(hello|hey|hi)\\b.{0,10}$", 'i')
 	if (pattern.test(messageText)) {
 		const firstName = (from || "").split(' ')[0]
-		return `🤖 This is an automated response: Hey ${firstName}, what's up?`
+		return new Response(`🤖 <em>This is an automated response:</em> Hey ${firstName}, what's up?`, 'RichText/Html')
 	}
 	return undefined
 }
 
-function sendMessage(imdisplayname: string, messageText: string, toId: string, requestHeaders: any) {
-	console.debug(`onhello/sendMessage: Replying \"${messageText}\" to \"${imdisplayname}\".`)
+function sendMessage(imdisplayname: string, response: Response, toId: string, requestHeaders: any) {
+	console.debug(`onhello/sendMessage: Replying \"${response.text}\" to \"${imdisplayname}\".`)
 	// This was mostly copied from watching the Network tab in the browser.
 	const url = `https://teams.microsoft.com/api/chatsvc/amer/v1/users/ME/conversations/${toId}/messages`
 	const body = {
-		content: messageText,
-		messagetype: 'Text',
+		content: response.text,
+		messagetype: response.messageType,
 		contenttype: 'text',
 		amsreferences: [],
 		clientmessageid: `${new Date().getTime()}${Math.floor(Math.random() * 1E4)}`,

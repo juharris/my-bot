@@ -28,7 +28,7 @@ console.debug("scripts/injected.js");
 		this.addEventListener('load', function () {
 			// const responseHeaders = this.getAllResponseHeaders()
 			try {
-				if (this.responseType != 'blob') {
+				if (/\/poll$/i.test(this._url) && this.responseType != 'blob') {
 					let responseBody;
 					if (this.responseType === '' || this.responseType === 'text') {
 						console.debug("using responseText. responseType:", this.responseType, this.responseText)

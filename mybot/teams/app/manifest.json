@@ -8,11 +8,6 @@
 	"icons": {
 		"128": "images/icon128.png"
 	},
-	"background": {
-		"scripts": [
-			"scripts/background.js"
-		]
-	},
 	"browser_action": {
 		"default_icon": "images/icon128.png",
 		"default_title": "__MSG_browserActionTitle__",
@@ -28,8 +23,7 @@
 	"content_scripts": [
 		{
 		  "matches": ["https://teams.microsoft.com/*",
-			"https://teams.live.com/*",
-			"https://*.notifications.skype.com/*"],
+			"https://teams.live.com/*"],
 		  "run_at": "document_start",
 		  "js": ["scripts/contentscript.js", "scripts/injected.js"]
 		}
@@ -40,7 +34,6 @@
 		"storage",
 		"tabs",
 		"https://teams.microsoft.com/*",
-		"https://teams.live.com/*",
-		"https://*.notifications.skype.com/*"
+		"https://teams.live.com/*"
 	]
 }
