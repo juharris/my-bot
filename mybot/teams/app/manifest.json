@@ -25,12 +25,22 @@
 		"browser_style": true,
 		"chrome_style": true
 	},
+	"content_scripts": [
+		{
+		  "matches": ["https://teams.microsoft.com/*",
+			"https://teams.live.com/*",
+			"https://*.notifications.skype.com/*"],
+		  "run_at": "document_start",
+		  "js": ["scripts/contentscript.js", "scripts/injected.js"]
+		}
+	  ],
+	"web_accessible_resources": ["scripts/injected.js"],
 	"permissions": [
+		"activeTab",
 		"storage",
-		"webRequest",
-		"webRequestBlocking",
+		"tabs",
 		"https://teams.microsoft.com/*",
 		"https://teams.live.com/*",
-		"https://wus.notifications.skype.com/*"
+		"https://*.notifications.skype.com/*"
 	]
 }
