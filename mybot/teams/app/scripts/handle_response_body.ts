@@ -1,3 +1,4 @@
+import { browser } from 'webextension-polyfill-ts'
 export function handleResponse(responseBody: any, requestHeaders: any) {
 	if (responseBody && Array.isArray(responseBody.eventMessages) && responseBody.eventMessages.length > 0) {
 		for (const event of responseBody.eventMessages) {
@@ -16,21 +17,30 @@ export function handleResponse(responseBody: any, requestHeaders: any) {
 				if (resource.messagetype === 'Text' && resource.contenttype === 'text') {
 					messageText = resource.content
 				} else if (resource.messagetype === 'RichText/Html' && resource.contenttype === 'text') {
-					// TODO Remove HTML.
-					messageText = resource.lastMessage.content
+					messageText = resource.content
+					if (messageText) {
+						// Get rid of HTML tags.
+						// There are fancier ways to do this but they can cause issues if they try to render themselves.
+						messageText = messageText.replace(/<[^>]+>/g, '')
+					}
 				}
-				const response = getResponse(messageText, from)
-				if (response) {
-					sendMessage(from, response, toId, requestHeaders)
+				if (messageText) {
+					console.debug(`onhello/handleResponse: Got \"${messageText}\" from \"${from}\".`)
+					const response = getResponse(from, messageText)
+					if (response) {
+						sendMessage(from, response, toId, requestHeaders)
+					}
 				}
 			}
 		}
 	}
 }
 
-function getResponse(messageText: string, from: string): string | undefined {
+function getResponse(from: string, messageText: string): string | undefined {
+	// TODO Get from browser.sync
 	// TODO Look into handling rich text with markdown/HTML. Might need to send a different message type.
-	if (/^(hello|hey|hi)\b.{0,10}/i.test(messageText)) {
+	const pattern = new RegExp("^(hello|hey|hi)\\b.{0,10}$", 'i')
+	if (pattern.test(messageText)) {
 		const firstName = (from || "").split(' ')[0]
 		return `🤖 This is an automated response: Hey ${firstName}, what's up?`
 	}
