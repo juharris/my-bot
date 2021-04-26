@@ -8,21 +8,20 @@ console.debug("scripts/injected.js");
 
 	var open = XHR.open;
 	var send = XHR.send;
-	// var setRequestHeader = XHR.setRequestHeader;
+	var setRequestHeader = XHR.setRequestHeader;
 
 	XHR.open = function (method, url) {
-		// this._method = method
-		// this._url = url
-		// this._requestHeaders = {};
-		// this._startTime = (new Date()).toISOString();
+		this._method = method
+		this._url = url
+		this._requestHeaders = {}
 
-		return open.apply(this, arguments);
-	};
+		return open.apply(this, arguments)
+	}
 
-	// XHR.setRequestHeader = function (header, value) {
-	// 	this._requestHeaders[header] = value;
-	// 	return setRequestHeader.apply(this, arguments);
-	// };
+	XHR.setRequestHeader = function (header, value) {
+		this._requestHeaders[header] = value;
+		return setRequestHeader.apply(this, arguments)
+	}
 
 	XHR.send = function (postData) {
 		console.debug("injected XHR.send")
@@ -32,10 +31,9 @@ console.debug("scripts/injected.js");
 					if (typeof postData === 'string') {
 						try {
 							// here you get the REQUEST HEADERS, in JSON format, so you can also use JSON.parse
-							this._requestHeaders = postData;
+							// this._requestHeaders = postData;
 						} catch (err) {
-							console.log('Request Header JSON decode failed, transfer_encoding field could be base64');
-							console.log(err);
+							console.log("Error getting headers.", err)
 						}
 					} else if (typeof postData === 'object' || typeof postData === 'array' || typeof postData === 'number' || typeof postData === 'boolean') {
 						// do something if you need
@@ -59,7 +57,7 @@ console.debug("scripts/injected.js");
 						console.debug("using response. responseType:", this.responseType, this.response)
 						responseBody = this.response
 					}
-					handleResponse(responseBody)
+					handleResponse(responseBody, this._requestHeaders)
 					// responseText is string or null
 
 					// here you get RESPONSE TEXT (BODY), in JSON format, so you can use JSON.parse
