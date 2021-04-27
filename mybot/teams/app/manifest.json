@@ -22,17 +22,22 @@
 	},
 	"content_scripts": [
 		{
-		  "matches": ["https://teams.microsoft.com/*",
-			"https://teams.live.com/*"],
-		  "run_at": "document_start",
-		  "js": ["scripts/contentscript.js", "scripts/injected.js"]
+			"matches": [
+				"https://teams.microsoft.com/*",
+				"https://teams.live.com/*"
+			],
+			"run_at": "document_start",
+			"js": [
+				"scripts/content_script.js",
+				"scripts/injected.js"
+			]
 		}
-	  ],
-	"web_accessible_resources": ["scripts/injected.js"],
+	],
+	"web_accessible_resources": [
+		"scripts/injected.js"
+	],
 	"permissions": [
-		"activeTab",
 		"storage",
-		"tabs",
 		"https://teams.microsoft.com/*",
 		"https://teams.live.com/*"
 	]

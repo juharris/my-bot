@@ -1,5 +1,9 @@
 import { browser } from 'webextension-polyfill-ts'
-export function handleResponse(responseBody: any, requestHeaders: any) {
+
+export function handleResponse(url: string, responseBody: any, requestHeaders: any) {
+	if (!/\/poll$/i.test(url)) {
+		return
+	}
 	if (responseBody && Array.isArray(responseBody.eventMessages) && responseBody.eventMessages.length > 0) {
 		for (const event of responseBody.eventMessages) {
 			console.debug("handle: event:", event, requestHeaders)
@@ -95,8 +99,8 @@ function sendMessage(imdisplayname: string, response: Response, toId: string, re
 			'x-ms-session-id': requestHeaders['x-ms-session-id'],
 			'x-ms-user-type': requestHeaders['x-ms-user-type'],
 		},
-		// TODO Maybe it could be teams.live.com?
-		referrer: 'https://teams.microsoft.com/_',
+		// Maybe it could also be teams.live.com?
+		// referrer: 'https://teams.microsoft.com/_',
 		referrerPolicy: 'strict-origin-when-cross-origin',
 		body: JSON.stringify(body),
 		method: 'POST',

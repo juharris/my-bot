@@ -1,51 +1,48 @@
 import { handleResponse } from './handle_response_body'
 
-console.debug("scripts/injected.js");
-
 (function (xhr) {
+	const XHR = XMLHttpRequest.prototype
 
-	var XHR = XMLHttpRequest.prototype;
-
-	var open = XHR.open;
-	var send = XHR.send;
-	var setRequestHeader = XHR.setRequestHeader;
+	const open = XHR.open
+	const send = XHR.send
+	const setRequestHeader = XHR.setRequestHeader
 
 	XHR.open = function (method, url) {
-		this._method = method
-		this._url = url
+		// this._url = url
 		this._requestHeaders = {}
 
 		return open.apply(this, arguments)
 	}
 
 	XHR.setRequestHeader = function (header, value) {
-		this._requestHeaders[header] = value;
+		this._requestHeaders[header] = value
 		return setRequestHeader.apply(this, arguments)
 	}
 
 	XHR.send = function (postData) {
-		console.debug("injected XHR.send")
+		// console.debug("onhello: XHR.send")
 		this.addEventListener('load', function () {
 			// const responseHeaders = this.getAllResponseHeaders()
+			// console.debug(`onhello: URL check ${this._url === this.responseURL}`, this._url, this.responseURL)
 			try {
-				if (/\/poll$/i.test(this._url) && this.responseType != 'blob') {
-					let responseBody;
+				if (this.responseType != 'blob') {
+					let responseBody
 					if (this.responseType === '' || this.responseType === 'text') {
-						console.debug("using responseText. responseType:", this.responseType, this.responseText)
+						// console.debug("onhello: using responseText. responseType:", this.responseType, this.responseText)
 						responseBody = JSON.parse(this.responseText)
-					} else /*if (this.responseType === 'json')*/ {
-						console.debug("using response. responseType:", this.responseType, this.response)
+					} else /* if (this.responseType === 'json') */ {
+						// console.debug("onhello: using response. responseType:", this.responseType, this.response)
 						responseBody = this.response
 					}
-					handleResponse(responseBody, this._requestHeaders)
-					console.debug("injected responseBody:", this._url, responseBody)
+					// console.debug("onhello: responseBody:", this.responseURL, responseBody)
+					handleResponse(this.responseURL, responseBody, this._requestHeaders)
 				}
 			} catch (err) {
-				console.debug("Error reading response.", err)
+				console.debug("onhello: Error reading response.", err)
 			}
-		});
+		})
 
-		return send.apply(this, arguments);
-	};
+		return send.apply(this, arguments)
+	}
 
 })(XMLHttpRequest)

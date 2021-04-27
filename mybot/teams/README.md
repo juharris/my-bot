@@ -1,6 +1,6 @@
-# Impersonator for Teams
+# onhello
 
-Reply to messages in Teams.
+Automatically reply to messages in Teams.
 
 <!--
 # Downloads
