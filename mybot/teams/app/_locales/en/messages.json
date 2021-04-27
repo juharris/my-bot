@@ -24,6 +24,12 @@
 	"themePreferenceDescription": {
 		"message": "Changing the theme will not effect this page until you reload the page."
 	},
+	"rulesSectionTitle": {
+		"message": "🤖 Rules"
+	},
+	"rulesPreferenceDescription": {
+		"message": "Set up some rules for how to respond to messages."
+	},
 	"advancedSectionTitle": {
 		"message": "🤓 Advanced"
 	}

@@ -1,10 +1,12 @@
 import { PaletteType } from '@material-ui/core'
+import Button from '@material-ui/core/Button'
 import Container from '@material-ui/core/Container'
 import FormControl from '@material-ui/core/FormControl'
 import FormControlLabel from '@material-ui/core/FormControlLabel'
 import Radio from '@material-ui/core/Radio'
 import RadioGroup from '@material-ui/core/RadioGroup'
 import { createStyles, Theme, WithStyles, withStyles } from '@material-ui/core/styles'
+import TextareaAutosize from '@material-ui/core/TextareaAutosize'
 import Typography from '@material-ui/core/Typography'
 import React from 'react'
 import { browser } from 'webextension-polyfill-ts'
@@ -25,10 +27,14 @@ const styles = (theme: Theme) => createStyles({
 	themeSelection: {
 		marginLeft: theme.spacing(2),
 	},
+	saveRulesButton: {
+		color: 'black',
+	},
 })
 
 class Options extends React.Component<WithStyles<typeof styles>, {
-	themePreference: ThemePreferenceType | '',
+	themePreference: ThemePreferenceType | ''
+	rulesJson: string
 }> {
 	private errorHandler = new ErrorHandler(undefined)
 
@@ -36,19 +42,25 @@ class Options extends React.Component<WithStyles<typeof styles>, {
 		super(props)
 		this.state = {
 			themePreference: '',
+			rulesJson: '',
 		}
 
 		this.handleChange = this.handleChange.bind(this)
+		this.handleRulesChange = this.handleRulesChange.bind(this)
 		this.handleThemeChange = this.handleThemeChange.bind(this)
+		this.saveRules = this.saveRules.bind(this)
 	}
 
-	componentDidMount(): void {
-		setupUserSettings(['themePreference']).then((userSettings) => {
-			const { themePreference } = userSettings
+	async componentDidMount(): Promise<void> {
+		setupUserSettings(['themePreference', 'rules']).then((userSettings) => {
+			const { themePreference, rules } = userSettings
+			console.debug("loaded rules:", rules)
 			this.setState({
 				themePreference,
+				rulesJson: rules,
 			})
 		})
+
 	}
 
 	handleChange(event: React.ChangeEvent<HTMLInputElement>): void {
@@ -56,6 +68,14 @@ class Options extends React.Component<WithStyles<typeof styles>, {
 		this.setState<never>({
 			[event.target.name]: value,
 		})
+	}
+
+	handleRulesChange(event: React.ChangeEvent<HTMLTextAreaElement>): void {
+		const value = event.target.value
+		this.setState<never>({
+			[event.target.name]: value,
+		})
+
 	}
 
 	handleThemeChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -70,6 +90,19 @@ class Options extends React.Component<WithStyles<typeof styles>, {
 			this.errorHandler.showError({ errorMsg })
 		})
 		browser.storage.sync.set(keys).catch(errorMsg => {
+			this.errorHandler.showError({ errorMsg })
+		})
+	}
+
+	saveRules(): void {
+		browser.storage.local.set({
+			rules: this.state.rulesJson
+		}).catch(errorMsg => {
+			this.errorHandler.showError({ errorMsg })
+		})
+		browser.storage.sync.set({
+			rules: this.state.rulesJson
+		}).catch(errorMsg => {
 			this.errorHandler.showError({ errorMsg })
 		})
 	}
@@ -96,6 +129,25 @@ class Options extends React.Component<WithStyles<typeof styles>, {
 						<FormControlLabel value="device" control={<Radio />} label="Device Preference" />
 					</RadioGroup>
 				</FormControl>
+			</div>
+			<div className={classes.section}>
+				<Typography component="h5" variant="h5">
+					{getMessage('rulesSectionTitle') || "Rules"}
+				</Typography>
+				<Typography component="p">
+					{getMessage('rulesPreferenceDescription')}
+				</Typography>
+				<TextareaAutosize
+					name="rulesJson"
+					aria-label="Enter your rules"
+					onChange={this.handleRulesChange}
+					value={this.state.rulesJson} />
+				<div>
+					<Button className={classes.saveRulesButton}
+						onClick={this.saveRules}>
+						Save Rules
+					</Button>
+				</div>
 			</div>
 		</Container >
 	}

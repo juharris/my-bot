@@ -40,21 +40,21 @@ export class AppTheme extends React.Component<Props, {
 	}
 
 	render(): React.ReactNode {
-		let primary = undefined
 		let { themePreference } = this.state
+
+		const themeOptions = {
+			palette: {
+				type: themePreference,
+			},
+		}
 
 		if (themePreference === 'dark') {
 			// Easier to see in dark mode.
-			primary = {
+			(themeOptions.palette as any).primary = {
 				main: blue[300],
 			}
 		}
-		const theme = createMuiTheme({
-			palette: {
-				type: themePreference,
-				primary,
-			},
-		})
+		const theme = createMuiTheme(themeOptions)
 		return (
 			<ThemeProvider theme={theme}>
 				<CssBaseline />
