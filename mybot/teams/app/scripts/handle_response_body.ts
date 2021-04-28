@@ -1,28 +1,10 @@
-import { browser } from 'webextension-polyfill-ts'
 import { Rule, RuleSettings } from './rules/rules'
 
-export async function handleResponse(url: string, responseBody: any, requestHeaders: any) {
+export async function handleResponse(url: string, responseBody: any, requestHeaders: any, rulesSettings: RuleSettings) {
 	console.debug("onhello: url:", url)
-	// Get the rules each time in case they get updated.
-	let { rules } = await browser.storage.local.get('rules')
-	console.debug("onhello: rules:", rules)
-	if (rules === undefined) {
-		const results = await browser.storage.sync.get('rules')
-		if (results === undefined || results.rules === undefined) {
-			console.debug("onhello: no rules found.")
-			return
-		}
-		rules = results.rules
-	}
-	let rulesSettings: RuleSettings
-	try {
-		rulesSettings = JSON.parse(rules)
-	} catch (err) {
-		console.warn("onhello: Error parsing rules. Open the extension options to correct them.", err)
-		return
-	}
 	for (const settings of rulesSettings.apps) {
 		if (settings === undefined || settings.urlPattern === undefined || !(new RegExp(settings.urlPattern, 'i').test(url))) {
+			console.debug("onhello: URL did not match the pattern.")
 			return
 		}
 		// Handle Teams response.

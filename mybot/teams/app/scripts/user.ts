@@ -28,6 +28,8 @@ export async function setupUserSettings(requiredKeys: (keyof (UserSettings))[]):
 	const result: any = { themePreference, rules }
 
 	if (requiredKeys.indexOf('rules') > -1 && rules === undefined) {
+		// browser.storage.local.remove('rules')
+		// browser.storage.sync.remove('rules')
 		const r = await browser.storage.sync.get(['rules'])
 		rules = r.rules
 		if (rules === undefined) {
@@ -58,7 +60,7 @@ export async function setupUserSettings(requiredKeys: (keyof (UserSettings))[]):
 					},
 				]
 			}
-			rules = JSON.stringify(settings)
+			rules = settings
 		} else {
 			browser.storage.local.set({ rules })
 		}

@@ -60,7 +60,7 @@ class Options extends React.Component<WithStyles<typeof styles>, {
 		setupUserSettings(['themePreference', 'rules']).then((userSettings) => {
 			const { themePreference } = userSettings
 			let { rules } = userSettings
-			rules = JSON.stringify(JSON.parse(rules), null, 4)
+			rules = JSON.stringify(rules, null, 4)
 			this.setState({
 				themePreference,
 				rulesJson: rules,
@@ -82,7 +82,6 @@ class Options extends React.Component<WithStyles<typeof styles>, {
 			const parsed = JSON.parse(value)
 			// TODO Validate more.
 		} catch (err) {
-			// TODO Make input red.
 			this.setState({ errorInRules: true })
 		}
 		this.setState<never>({
@@ -109,23 +108,19 @@ class Options extends React.Component<WithStyles<typeof styles>, {
 	}
 
 	saveRules(): void {
-		let parsed
+		let rules
 		try {
-			parsed = JSON.parse(this.state.rulesJson)
+			rules = JSON.parse(this.state.rulesJson)
 			// TODO Validate more.
 		} catch (err) {
 			alert(`Error parsing rules: ${err}.`)
 			return
 		}
-		parsed.dateModified = new Date()
-		browser.storage.local.set({
-			rules: JSON.stringify(parsed)
-		}).catch(errorMsg => {
+		rules.dateModified = new Date()
+		browser.storage.local.set({ rules }).catch(errorMsg => {
 			this.errorHandler.showError({ errorMsg })
 		})
-		browser.storage.sync.set({
-			rules: JSON.stringify(parsed)
-		}).catch(errorMsg => {
+		browser.storage.sync.set({ rules }).catch(errorMsg => {
 			this.errorHandler.showError({ errorMsg })
 		})
 	}

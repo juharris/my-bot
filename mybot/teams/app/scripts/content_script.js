@@ -1,8 +1,25 @@
-import { browser } from 'webextension-polyfill-ts'
+import { browser } from 'webextension-polyfill-ts';
+import { getRules } from './rules/get_rules';
 
-const s = document.createElement('script')
-s.src = browser.extension.getURL('scripts/injected.js')
-s.onload = function () {
-    this.remove()
-};
-(document.head || document.documentElement).appendChild(s)
+console.info("onhello: in content_script.js")
+
+getRules().then(rules => {
+    // I tried so many ways to get the rules into the page, this seems like one of the only ways.
+    const rulesScript = document.createElement('script')
+    const rulesString = JSON.stringify(rules).replace(/"/g, '\\"')
+    rulesScript.textContent = `window._onhelloRules = JSON.parse("${rulesString}");`;
+
+    (document.head || document.documentElement).appendChild(rulesScript)
+
+    // rulesScript.onload = async function () {
+    //     this.remove()
+
+    const s = document.createElement('script')
+    s.src = browser.extension.getURL('scripts/injected.js')
+    s.onload = async function () {
+        this.remove()
+    };
+    (document.head || document.documentElement).appendChild(s)
+    // };
+
+})
