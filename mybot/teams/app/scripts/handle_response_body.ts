@@ -1,44 +1,67 @@
 import { browser } from 'webextension-polyfill-ts'
+import { Rule, RuleSettings } from './rules/rules'
 
-export function handleResponse(url: string, responseBody: any, requestHeaders: any) {
-	if (!/\/poll$/i.test(url)) {
+export async function handleResponse(url: string, responseBody: any, requestHeaders: any) {
+	console.debug("onhello: url:", url)
+	// Get the rules each time in case they get updated.
+	let { rules } = await browser.storage.local.get('rules')
+	console.debug("onhello: rules:", rules)
+	if (rules === undefined) {
+		const results = await browser.storage.sync.get('rules')
+		if (results === undefined || results.rules === undefined) {
+			console.debug("onhello: no rules found.")
+			return
+		}
+		rules = results.rules
+	}
+	let rulesSettings: RuleSettings
+	try {
+		rulesSettings = JSON.parse(rules)
+	} catch (err) {
+		console.warn("onhello: Error parsing rules. Open the extension options to correct them.", err)
 		return
 	}
-	if (responseBody && Array.isArray(responseBody.eventMessages) && responseBody.eventMessages.length > 0) {
-		for (const event of responseBody.eventMessages) {
-			console.debug("handle: event:", event, requestHeaders)
-			if (event.type === 'EventMessage' && event.resource && event.resourceType === 'NewMessage') {
-				let { resource } = event
-				if (resource.lastMessage) {
-					resource = resource.lastMessage
-				}
-				let messageText
-				if (resource.composetime) {
-					const sentTime = new Date(resource.composetime)
-					// Check if it was sent in the last 1 minute.
-					if (new Date().getTime() - sentTime.getTime() > 60 * 1000) {
-						continue
+	for (const settings of rulesSettings.apps) {
+		if (settings === undefined || settings.urlPattern === undefined || !(new RegExp(settings.urlPattern, 'i').test(url))) {
+			return
+		}
+		// Handle Teams response.
+		if (responseBody && Array.isArray(responseBody.eventMessages) && responseBody.eventMessages.length > 0) {
+			for (const event of responseBody.eventMessages) {
+				console.debug("handle: event:", event, requestHeaders)
+				if (event.type === 'EventMessage' && event.resource && event.resourceType === 'NewMessage') {
+					let { resource } = event
+					if (resource.lastMessage) {
+						resource = resource.lastMessage
 					}
-				}
-				// const receivedTime = resource.originalarrivaltime
-				const from = resource.imdisplayname
-				const toId = resource.to
-				// Other types: messagetype: "Control/Typing", contenttype: "Application/Message"
-				if (resource.messagetype === 'Text' && resource.contenttype === 'text') {
-					messageText = resource.content
-				} else if (resource.messagetype === 'RichText/Html' && resource.contenttype === 'text') {
-					messageText = resource.content
+					let messageText
+					if (resource.composetime) {
+						const sentTime = new Date(resource.composetime)
+						// Check if it was sent in the last 1 minute.
+						if (new Date().getTime() - sentTime.getTime() > 60 * 1000) {
+							continue
+						}
+					}
+					// const receivedTime = resource.originalarrivaltime
+					const from = resource.imdisplayname
+					const toId = resource.to
+					// Other types: messagetype: "Control/Typing", contenttype: "Application/Message"
+					if (resource.messagetype === 'Text' && resource.contenttype === 'text') {
+						messageText = resource.content
+					} else if (resource.messagetype === 'RichText/Html' && resource.contenttype === 'text') {
+						messageText = resource.content
+						if (messageText) {
+							// Get rid of HTML tags.
+							// There are fancier ways to do this but they can cause issues if they try to render themselves.
+							messageText = messageText.replace(/<[^>]+>/g, '')
+						}
+					}
 					if (messageText) {
-						// Get rid of HTML tags.
-						// There are fancier ways to do this but they can cause issues if they try to render themselves.
-						messageText = messageText.replace(/<[^>]+>/g, '')
-					}
-				}
-				if (messageText) {
-					console.debug(`onhello/handleResponse: Got \"${messageText}\" from \"${from}\".`)
-					const response = getResponse(from, messageText)
-					if (response) {
-						sendMessage(from, response, toId, requestHeaders)
+						console.debug(`onhello/handleResponse: Got \"${messageText}\" from \"${from}\".`)
+						const response = getResponse(from, messageText, settings.rules)
+						if (response) {
+							sendMessage(from, response, toId, requestHeaders)
+						}
 					}
 				}
 			}
@@ -46,18 +69,27 @@ export function handleResponse(url: string, responseBody: any, requestHeaders: a
 	}
 }
 
-class Response {
+export class Response {
 	constructor(
 		public text: string,
 		public messageType: 'Text' | 'RichText/Html' = 'Text') { }
 }
 
-function getResponse(from: string, messageText: string): Response | undefined {
-	// TODO Get rules from `browser.storage.sync`.
-	const pattern = new RegExp("^(hello|hey|hi)\\b.{0,10}$", 'i')
-	if (pattern.test(messageText)) {
-		const firstName = (from || "").split(' ')[0]
-		return new Response(`🤖 <em>This is an automated response:</em> Hey ${firstName}, what's up?`, 'RichText/Html')
+export function replaceResponseText(text: string, from: string): string {
+	const firstName = (from || "").split(' ')[0]
+	const result = text.replace(/{{\s*FROM_FIRST_NAME\s*}}/g, firstName)
+	text = text.replace(/{{\s*FROM\s*}}/g, from)
+	return result
+}
+
+export function getResponse(from: string, messageText: string, rules: Rule[]): Response | undefined {
+	for (const rule of rules) {
+		if (rule.messageExactMatch === messageText
+			|| (rule.messagePattern !== undefined
+				&& new RegExp(rule.messagePattern, rule.regexFlags).test(messageText))) {
+			const responseText = replaceResponseText(rule.response, from)
+			return new Response(responseText, 'RichText/Html')
+		}
 	}
 	return undefined
 }

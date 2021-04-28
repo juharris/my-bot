@@ -20,7 +20,7 @@ import { handleResponse } from './handle_response_body'
 	}
 
 	XHR.send = function (postData) {
-		// console.debug("onhello: XHR.send")
+		console.debug("onhello: XHR.send")
 		this.addEventListener('load', function () {
 			// const responseHeaders = this.getAllResponseHeaders()
 			// console.debug(`onhello: URL check ${this._url === this.responseURL}`, this._url, this.responseURL)

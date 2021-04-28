@@ -28,6 +28,7 @@
 			],
 			"run_at": "document_start",
 			"js": [
+				"scripts/handle_response_body.js",
 				"scripts/content_script.js",
 				"scripts/injected.js"
 			]

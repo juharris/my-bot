@@ -27,6 +27,9 @@ const styles = (theme: Theme) => createStyles({
 	themeSelection: {
 		marginLeft: theme.spacing(2),
 	},
+	rulesInput: {
+		width: '80%'
+	},
 	saveRulesButton: {
 		color: 'black',
 	},
@@ -35,6 +38,7 @@ const styles = (theme: Theme) => createStyles({
 class Options extends React.Component<WithStyles<typeof styles>, {
 	themePreference: ThemePreferenceType | ''
 	rulesJson: string
+	errorInRules: boolean | string
 }> {
 	private errorHandler = new ErrorHandler(undefined)
 
@@ -43,6 +47,7 @@ class Options extends React.Component<WithStyles<typeof styles>, {
 		this.state = {
 			themePreference: '',
 			rulesJson: '',
+			errorInRules: false,
 		}
 
 		this.handleChange = this.handleChange.bind(this)
@@ -53,8 +58,9 @@ class Options extends React.Component<WithStyles<typeof styles>, {
 
 	async componentDidMount(): Promise<void> {
 		setupUserSettings(['themePreference', 'rules']).then((userSettings) => {
-			const { themePreference, rules } = userSettings
-			console.debug("loaded rules:", rules)
+			const { themePreference } = userSettings
+			let { rules } = userSettings
+			rules = JSON.stringify(JSON.parse(rules), null, 4)
 			this.setState({
 				themePreference,
 				rulesJson: rules,
@@ -72,8 +78,16 @@ class Options extends React.Component<WithStyles<typeof styles>, {
 
 	handleRulesChange(event: React.ChangeEvent<HTMLTextAreaElement>): void {
 		const value = event.target.value
+		try {
+			const parsed = JSON.parse(value)
+			// TODO Validate more.
+		} catch (err) {
+			// TODO Make input red.
+			this.setState({ errorInRules: true })
+		}
 		this.setState<never>({
 			[event.target.name]: value,
+			errorInRules: false,
 		})
 
 	}
@@ -95,13 +109,22 @@ class Options extends React.Component<WithStyles<typeof styles>, {
 	}
 
 	saveRules(): void {
+		let parsed
+		try {
+			parsed = JSON.parse(this.state.rulesJson)
+			// TODO Validate more.
+		} catch (err) {
+			alert(`Error parsing rules: ${err}.`)
+			return
+		}
+		parsed.dateModified = new Date()
 		browser.storage.local.set({
-			rules: this.state.rulesJson
+			rules: JSON.stringify(parsed)
 		}).catch(errorMsg => {
 			this.errorHandler.showError({ errorMsg })
 		})
 		browser.storage.sync.set({
-			rules: this.state.rulesJson
+			rules: JSON.stringify(parsed)
 		}).catch(errorMsg => {
 			this.errorHandler.showError({ errorMsg })
 		})
@@ -137,8 +160,8 @@ class Options extends React.Component<WithStyles<typeof styles>, {
 				<Typography component="p">
 					{getMessage('rulesPreferenceDescription')}
 				</Typography>
-				<TextareaAutosize
-					name="rulesJson"
+				<TextareaAutosize name="rulesJson"
+					className={classes.rulesInput}
 					aria-label="Enter your rules"
 					onChange={this.handleRulesChange}
 					value={this.state.rulesJson} />
