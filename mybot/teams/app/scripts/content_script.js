@@ -11,15 +11,10 @@ getRules().then(rules => {
 
     (document.head || document.documentElement).appendChild(rulesScript)
 
-    // rulesScript.onload = async function () {
-    //     this.remove()
-
     const s = document.createElement('script')
     s.src = browser.extension.getURL('scripts/injected.js')
     s.onload = async function () {
         this.remove()
     };
     (document.head || document.documentElement).appendChild(s)
-    // };
-
 })

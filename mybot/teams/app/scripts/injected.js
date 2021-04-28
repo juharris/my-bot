@@ -9,7 +9,6 @@ import { handleResponse } from './handle_response_body'
 // However, this could be expensive and will often not be necessary.
 // Users will just have to refresh the tab of a site if they want to use the latest rules.
 // Also, 
-let rules = undefined
 
 
 // async function getRules() {
@@ -66,6 +65,7 @@ let rules = undefined
 	}
 
 	XHR.send = function (postData) {
+		const rules = window._onhelloRules
 		console.debug("onhello: XHR.send")
 		if (rules === undefined) {
 			console.info("onhello: XHR.send: No rules set.")
@@ -84,7 +84,7 @@ let rules = undefined
 							responseBody = this.response
 						}
 						// console.debug("onhello: responseBody:", this.responseURL, responseBody)
-						handleResponse(this.responseURL, responseBody, this._requestHeaders, window._onhelloRules)
+						handleResponse(this.responseURL, responseBody, this._requestHeaders, rules)
 					}
 				} catch (err) {
 					console.debug("onhello: Error reading response.", err)
