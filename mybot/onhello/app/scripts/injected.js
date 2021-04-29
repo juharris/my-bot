@@ -41,6 +41,7 @@ import { handleResponse } from './handle_response_body'
 							// console.debug("onhello: URL did not match the pattern.")
 							return
 						}
+						// console.debug("onhello: URL:", url)
 
 						if (this.responseType != 'blob') {
 							let responseBody
@@ -53,7 +54,7 @@ import { handleResponse } from './handle_response_body'
 							}
 							// console.debug("onhello: responseBody:", this.responseURL, responseBody)
 
-							handleResponse(responseBody, this._requestHeaders, settings)
+							handleResponse(url, responseBody, this._requestHeaders, settings)
 						}
 					}
 				} catch (err) {
