@@ -21,7 +21,7 @@ export const DEFAULT_RULES: RulesSettings = {
 					responses: ["Good morning {{ FROM }}, what's up?"]
 				},
 				{
-					messagePattern: '^(hello|hey|hi)\\b.{0,10}$',
+					messagePattern: '^(hello|hey|hi|good (morning|evening|afternoon))\\b.{0,12}$',
 					regexFlags: 'i',
 					responses: ["🤖 <em>This is an automated response:</em> Hey {{ FROM_FIRST_NAME }}, what's up?"]
 				},

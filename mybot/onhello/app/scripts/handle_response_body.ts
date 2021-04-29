@@ -1,50 +1,43 @@
 import { Rule, Rules, RulesSettings } from './rules/rules'
 
-export async function handleResponse(url: string, responseBody: any, requestHeaders: any, rulesSettings: RulesSettings) {
-	// console.debug("onhello: url:", url)
-	for (const settings of rulesSettings.apps) {
-		if (settings === undefined || settings.urlPattern === undefined || !(new RegExp(settings.urlPattern, 'i').test(url))) {
-			// console.debug("onhello: URL did not match the pattern.")
-			return
-		}
-		// Handle Teams response.
-		// Eventually the rules will have JSON paths to know how to handle messages for different sites.
-		if (responseBody && Array.isArray(responseBody.eventMessages) && responseBody.eventMessages.length > 0) {
-			for (const event of responseBody.eventMessages) {
-				// console.debug("onhello: handle: event:", event, requestHeaders)
-				if (event.type === 'EventMessage' && event.resource && event.resourceType === 'NewMessage') {
-					let { resource } = event
-					if (resource.lastMessage) {
-						resource = resource.lastMessage
+export async function handleResponse(responseBody: any, requestHeaders: any, settings: Rules) {
+	// Handle Teams response.
+	// Eventually the rules will have JSON paths to know how to handle messages for different sites.
+	if (responseBody && Array.isArray(responseBody.eventMessages) && responseBody.eventMessages.length > 0) {
+		for (const event of responseBody.eventMessages) {
+			// console.debug("onhello: handle: event:", event, requestHeaders)
+			if (event.type === 'EventMessage' && event.resource && event.resourceType === 'NewMessage') {
+				let { resource } = event
+				if (resource.lastMessage) {
+					resource = resource.lastMessage
+				}
+				let messageText
+				if (resource.composetime) {
+					const sentTime = new Date(resource.composetime)
+					// Check if it was sent in the last 1 minute.
+					if (new Date().getTime() - sentTime.getTime() > 60 * 1000) {
+						continue
 					}
-					let messageText
-					if (resource.composetime) {
-						const sentTime = new Date(resource.composetime)
-						// Check if it was sent in the last 1 minute.
-						if (new Date().getTime() - sentTime.getTime() > 60 * 1000) {
-							continue
-						}
-					}
-					// const receivedTime = resource.originalarrivaltime
-					const from = resource.imdisplayname
-					const toId = resource.to
-					// Other types: messagetype: "Control/Typing", contenttype: "Application/Message"
-					if (resource.messagetype === 'Text' && resource.contenttype === 'text') {
-						messageText = resource.content
-					} else if (resource.messagetype === 'RichText/Html' && resource.contenttype === 'text') {
-						messageText = resource.content
-						if (messageText) {
-							// Get rid of HTML tags.
-							// There are fancier ways to do this but they can cause issues if they try to render themselves.
-							messageText = messageText.replace(/<[^>]+>/g, '')
-						}
-					}
+				}
+				// const receivedTime = resource.originalarrivaltime
+				const from = resource.imdisplayname
+				const toId = resource.to
+				// Other types: messagetype: "Control/Typing", contenttype: "Application/Message"
+				if (resource.messagetype === 'Text' && resource.contenttype === 'text') {
+					messageText = resource.content
+				} else if (resource.messagetype === 'RichText/Html' && resource.contenttype === 'text') {
+					messageText = resource.content
 					if (messageText) {
-						console.debug(`onhello: Got \"${messageText}\" from \"${from}\".`)
-						const response = getResponse(from, messageText, settings.rules)
-						if (response) {
-							sendMessage(from, response, toId, requestHeaders, settings)
-						}
+						// Get rid of HTML tags.
+						// There are fancier ways to do this but they can cause issues if they try to render themselves.
+						messageText = messageText.replace(/<[^>]+>/g, '')
+					}
+				}
+				if (messageText) {
+					console.debug(`onhello: Got \"${messageText}\" from \"${from}\".`)
+					const response = getResponse(from, messageText, settings.rules)
+					if (response) {
+						sendMessage(from, response, toId, requestHeaders, settings)
 					}
 				}
 			}

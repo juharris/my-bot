@@ -9,7 +9,6 @@ import { handleResponse } from './handle_response_body'
 // Also, you can't access the extension storage directly in this context.
 
 (function (xhr) {
-	console.debug("onhello: setting up xhr")
 	const XHR = XMLHttpRequest.prototype
 
 	const open = XHR.open
@@ -30,27 +29,35 @@ import { handleResponse } from './handle_response_body'
 
 	XHR.send = function (postData) {
 		const rules = window._onhelloRules
-		console.debug("onhello: XHR.send")
 		if (rules === undefined) {
-			console.info("onhello: XHR.send: No rules set.")
+			console.debug("onhello: XHR.send: No rules set.")
 		} else {
 			this.addEventListener('load', function () {
 				// const responseHeaders = this.getAllResponseHeaders()
 				try {
-					if (this.responseType != 'blob') {
-						let responseBody
-						if (this.responseType === '' || this.responseType === 'text') {
-							// console.debug("onhello: using responseText. responseType:", this.responseType, this.responseText)
-							responseBody = JSON.parse(this.responseText)
-						} else /* if (this.responseType === 'json') */ {
-							// console.debug("onhello: using response. responseType:", this.responseType, this.response)
-							responseBody = this.response
+					for (const settings of rules.apps) {
+						const url = this.responseURL
+						if (settings === undefined || settings.urlPattern === undefined || !(new RegExp(settings.urlPattern, 'i').test(url))) {
+							// console.debug("onhello: URL did not match the pattern.")
+							return
 						}
-						// console.debug("onhello: responseBody:", this.responseURL, responseBody)
-						handleResponse(this.responseURL, responseBody, this._requestHeaders, rules)
+
+						if (this.responseType != 'blob') {
+							let responseBody
+							if (this.responseType === '' || this.responseType === 'text') {
+								// console.debug("onhello: using responseText. responseType:", this.responseType, this.responseText)
+								responseBody = JSON.parse(this.responseText)
+							} else /* if (this.responseType === 'json') */ {
+								// console.debug("onhello: using response. responseType:", this.responseType, this.response)
+								responseBody = this.response
+							}
+							// console.debug("onhello: responseBody:", this.responseURL, responseBody)
+
+							handleResponse(responseBody, this._requestHeaders, settings)
+						}
 					}
 				} catch (err) {
-					console.debug("onhello: Error reading response.", err)
+					console.debug("onhello: Error reading response or processing rules.", err)
 				}
 			})
 		}
