@@ -153,13 +153,16 @@ class Options extends React.Component<WithStyles<typeof styles>, {
 					{getMessage('rulesSectionTitle') || "Rules"}
 				</Typography>
 				<Typography component="p">
-					{getMessage('rulesPreferenceDescription')}
+					{getMessage('rulesInstructions')}
 				</Typography>
 				<TextareaAutosize name="rulesJson"
 					className={classes.rulesInput}
 					aria-label="Enter your rules"
 					onChange={this.handleRulesChange}
 					value={this.state.rulesJson} />
+				<Typography component="p">
+					{getMessage('saveInstructions')}
+				</Typography>
 				<div>
 					<Button className={classes.saveRulesButton}
 						onClick={this.saveRules}>

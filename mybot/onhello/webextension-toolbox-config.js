@@ -13,8 +13,6 @@ module.exports = {
 			[
 				resolve('app', '*.{js,mjs,jsx,ts,tsx}'),
 				resolve('app', '?(scripts)/*.{js,mjs,jsx,ts,tsx}'),
-				resolve('app', '?(scripts)/*/*.{js,mjs,jsx,ts,tsx}'),
-				// resolve('node_modules/webextension-polyfill/dist/browser-polyfill.js')
 			]
 		)
 		config.module.rules.push({

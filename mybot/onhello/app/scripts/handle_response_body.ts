@@ -1,16 +1,17 @@
-import { Rule, RuleSettings } from './rules/rules'
+import { Rule, Rules, RulesSettings } from './rules/rules'
 
-export async function handleResponse(url: string, responseBody: any, requestHeaders: any, rulesSettings: RuleSettings) {
-	console.debug("onhello: url:", url)
+export async function handleResponse(url: string, responseBody: any, requestHeaders: any, rulesSettings: RulesSettings) {
+	// console.debug("onhello: url:", url)
 	for (const settings of rulesSettings.apps) {
 		if (settings === undefined || settings.urlPattern === undefined || !(new RegExp(settings.urlPattern, 'i').test(url))) {
-			console.debug("onhello: URL did not match the pattern.")
+			// console.debug("onhello: URL did not match the pattern.")
 			return
 		}
 		// Handle Teams response.
+		// Eventually the rules will have JSON paths to know how to handle messages for different sites.
 		if (responseBody && Array.isArray(responseBody.eventMessages) && responseBody.eventMessages.length > 0) {
 			for (const event of responseBody.eventMessages) {
-				console.debug("handle: event:", event, requestHeaders)
+				// console.debug("onhello: handle: event:", event, requestHeaders)
 				if (event.type === 'EventMessage' && event.resource && event.resourceType === 'NewMessage') {
 					let { resource } = event
 					if (resource.lastMessage) {
@@ -39,10 +40,10 @@ export async function handleResponse(url: string, responseBody: any, requestHead
 						}
 					}
 					if (messageText) {
-						console.debug(`onhello/handleResponse: Got \"${messageText}\" from \"${from}\".`)
+						console.debug(`onhello: Got \"${messageText}\" from \"${from}\".`)
 						const response = getResponse(from, messageText, settings.rules)
 						if (response) {
-							sendMessage(from, response, toId, requestHeaders)
+							sendMessage(from, response, toId, requestHeaders, settings)
 						}
 					}
 				}
@@ -58,28 +59,36 @@ export class Response {
 }
 
 export function replaceResponseText(text: string, from: string): string {
-	const firstName = (from || "").split(' ')[0]
-	const result = text.replace(/{{\s*FROM_FIRST_NAME\s*}}/g, firstName)
-	text = text.replace(/{{\s*FROM\s*}}/g, from)
+	const firstName = (from || "").split(/\s+/)[0]
+	let result = text.replace(/{{\s*FROM_FIRST_NAME\s*}}/g, firstName)
+	result = result.replace(/{{\s*FROM\s*}}/g, from)
 	return result
 }
 
 export function getResponse(from: string, messageText: string, rules: Rule[]): Response | undefined {
 	for (const rule of rules) {
+		// console.debug("onhello: Checking rule:", rule)
 		if (rule.messageExactMatch === messageText
 			|| (rule.messagePattern !== undefined
 				&& new RegExp(rule.messagePattern, rule.regexFlags).test(messageText))) {
-			const responseText = replaceResponseText(rule.response, from)
+			if (!Array.isArray(rule.responses) || rule.responses.length === 0) {
+				console.warn("onhello: There are no responses set for rule:", rule)
+			}
+			// Pick a random response.
+			let responseText = rule.responses[Math.floor(rule.responses.length * Math.random())]
+			responseText = replaceResponseText(responseText, from)
 			return new Response(responseText, 'RichText/Html')
 		}
 	}
 	return undefined
 }
 
-function sendMessage(imdisplayname: string, response: Response, toId: string, requestHeaders: any) {
+function sendMessage(imdisplayname: string, response: Response, toId: string, requestHeaders: any, settings: Rules) {
 	console.debug(`onhello/sendMessage: Replying \"${response.text}\" to \"${imdisplayname}\".`)
-	// This was mostly copied from watching the Network tab in the browser.
-	const url = `https://teams.microsoft.com/api/chatsvc/amer/v1/users/ME/conversations/${toId}/messages`
+	// This was built using by watching request in the Network tab on the browser's DevTools.
+	let url = settings.replyUrl
+	url = url.replace(/{{toId}}/g, toId)
+
 	const body = {
 		content: response.text,
 		messagetype: response.messageType,
@@ -92,7 +101,7 @@ function sendMessage(imdisplayname: string, response: Response, toId: string, re
 			subject: null
 		}
 	}
-	// TODO Look into retrieving some fields from other messages.
+	// Could look into retrieving some fields from other messages so that this can be automatically updated.
 	return fetch(url, {
 		headers: {
 			accept: 'json',
@@ -113,7 +122,7 @@ function sendMessage(imdisplayname: string, response: Response, toId: string, re
 			'x-ms-session-id': requestHeaders['x-ms-session-id'],
 			'x-ms-user-type': requestHeaders['x-ms-user-type'],
 		},
-		// Maybe it could also be teams.live.com?
+		// Maybe it could also be teams.live.com? Seems like it's not needed.
 		// referrer: 'https://teams.microsoft.com/_',
 		referrerPolicy: 'strict-origin-when-cross-origin',
 		body: JSON.stringify(body),

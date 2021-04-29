@@ -1,6 +1,6 @@
 import { PaletteType } from '@material-ui/core'
 import { browser } from 'webextension-polyfill-ts'
-import { RuleSettings } from './rules/rules'
+import { DEFAULT_RULES } from './rules/get_rules'
 
 export type ThemePreferenceType = PaletteType | 'device'
 
@@ -33,34 +33,7 @@ export async function setupUserSettings(requiredKeys: (keyof (UserSettings))[]):
 		const r = await browser.storage.sync.get(['rules'])
 		rules = r.rules
 		if (rules === undefined) {
-			const settings: RuleSettings = {
-				dateModified: new Date(),
-				apps: [
-					{
-						comments: "For Microsoft Teams",
-						urlPattern: '/poll$',
-						// TODO Add JSON paths of where to get the message, sender name, etc.
-						// TODO Add time range of when to respond.
-						// TODO Add message age limit.
-						rules: [
-							{
-								messageExactMatch: "Hi",
-								response: "Hey, what's up?"
-							},
-							{
-								messageExactMatch: "Good morning",
-								response: "Good morning {{ FROM }}, what's up?"
-							},
-							{
-								messagePattern: '^(hello|hey|hi)\\b.{0,10}$',
-								regexFlags: 'i',
-								response: "🤖 <em>This is an automated response:</em> Hey {{ FROM_FIRST_NAME }}, what's up?"
-							},
-						]
-					},
-				]
-			}
-			rules = settings
+			rules = DEFAULT_RULES
 		} else {
 			browser.storage.local.set({ rules })
 		}

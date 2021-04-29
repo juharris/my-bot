@@ -1,6 +1,6 @@
 # onhello
 
-Automatically reply to messages in Teams.
+Automatically reply to messages in Teams (and soon other platforms).
 
 <!--
 # Downloads
@@ -9,6 +9,7 @@ You can download the extension for various browsers:
 -->
 
 # Dev
+This was built using [webextension-toolbox](https://github.com/HaNdTriX/webextension-toolbox).
 
 ## Install
 
@@ -28,10 +29,5 @@ Run one of:
     yarn build firefox
     yarn build opera
 
-## Environment
-
-The build tool also defines a variable named `process.env.NODE_ENV` in your scripts. 
-
-## Docs
-
-* [webextension-toolbox](https://github.com/HaNdTriX/webextension-toolbox)
+## Installing in the browser
+Load the `dist/<browser>` folder as an unpacked extension in your browser.
